@@ -6,12 +6,9 @@ Created: March 28, 2022
 Purpose: detection module
 """
 import logging
-import os
-import tarfile
 
 import cv2
 import numpy as np
-import requests
 import tensorflow as tf
 
 import util
@@ -22,22 +19,12 @@ MODEL = 'efficientdet-lite4'
 logger = util.get_logger(__name__)
 
 
-def download(m):
-    if m not in os.listdir():
-        fname = f'{m}.tgz' if m.find('lite') else f'{m}.tar.gz'
-        r = requests.get(f'https://storage.googleapis.com/cloud-tpu-checkpoints/efficientdet/coco/{fname}')
-        with open(fname, 'wb') as f:
-            f.write(r.content)
-        with tarfile.open(fname) as f:
-            f.extractall()
-
-
 class Detector:
     """Inference with efficientDet object detector"""
     def __init__(self, *, download_model=False):
         if download_model:
             # Download checkpoint.
-            download(MODEL)
+            util.download(MODEL)
             logger.info(f'Using model in {MODEL}')
 
         self.driver = infer_lib.KerasDriver(MODEL, debug=False, model_name=MODEL)

@@ -6,7 +6,10 @@ Created: 05 April, 2022
 Purpose: utiltity functions and classes
 """
 import logging
+import os
+import tarfile
 
+import requests
 import tensorflow as tf
 
 
@@ -36,3 +39,13 @@ def get_logger(name, level=logging.ERROR):
     logger.addHandler(handler)
     logger.propagate = False
     return logger
+
+
+def download(m):
+    if m not in os.listdir():
+        fname = f'{m}.tgz' if m.find('lite') else f'{m}.tar.gz'
+        r = requests.get(f'https://storage.googleapis.com/cloud-tpu-checkpoints/efficientdet/coco/{fname}')
+        with open(fname, 'wb') as f:
+            f.write(r.content)
+        with tarfile.open(fname) as f:
+            f.extractall()

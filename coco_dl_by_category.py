@@ -3,8 +3,8 @@
 Author(s): saurabh.pathak@tii.ae
 Created: April 01, 2022
 
-Purpose: async parallel download files and annotations from COCO containing only a given category (eg. persons)
-and save in YOLOv3 txt format
+Purpose: async parallel download image files and annotations from COCO containing only a given category (eg. persons)
+and save labels in [ymin, xmin, ymax, xmax] txt format
 """
 import asyncio
 import os
@@ -56,9 +56,6 @@ async def main():
                                for im in dl_images])
 
     for im in images:
-        dw = 1. / im['width']
-        dh = 1. / im['height']
-
         ann_ids = coco.getAnnIds(imgIds=im['id'], catIds=cat_ids, iscrowd=None)
         anns = coco.loadAnns(ann_ids)
 
@@ -74,23 +71,8 @@ async def main():
                 xmax = anns[i]["bbox"][2] + anns[i]["bbox"][0]
                 ymax = anns[i]["bbox"][3] + anns[i]["bbox"][1]
 
-                x = (xmin + xmax)/2
-                y = (ymin + ymax)/2
-
-                w = xmax - xmin
-                h = ymax-ymin
-
-                x = x * dw
-                w = w * dw
-                y = y * dh
-                h = h * dh
-
-                # Note: This assumes a single-category dataset, and thus the "0" at the beginning of each line.
-                mystring = str("0 " + str(truncate(x, 7)) +
-                               " " + str(truncate(y, 7)) +
-                               " " + str(truncate(w, 7)) +
-                               " " + str(truncate(h, 7)))
-                myfile.write(mystring)
+                # Note: This forms a single-category dataset, and thus the "0" at the beginning of each line.
+                myfile.write(f"0 {ymin} {xmin} {ymax} {xmax}")
                 myfile.write("\n")
 
         myfile.close()
