@@ -5,7 +5,6 @@ Created: April 12, 2022
 
 Purpose: data generator for training physical adversarial attacker on COCO persons
 """
-import math
 import os
 
 import cv2
@@ -20,20 +19,15 @@ import utils
 
 class COCOPersonsSequence(tf.keras.utils.Sequence):
 
-    def __init__(self, img_dir, label_dir, output_size, mean_rgb, stddev_rgb, *, batch_size=1, shuffle=True):
+    def __init__(self, img_dir, label_dir, output_size, mean_rgb, stddev_rgb, *, shuffle=True):
         super().__init__()
         self._img_dir = img_dir
         self._label_dir = label_dir
         self._output_size = output_size
         self._mean_rgb = mean_rgb
         self._stddev_rgb = stddev_rgb
-        self.batch_size = batch_size
         self._flist = os.listdir(self._img_dir)
         self._shuffle = shuffle
-        self._idx = 0
-
-        if shuffle:
-            np.random.shuffle(self._flist)
 
     @staticmethod
     def _parse_line(line):
@@ -45,19 +39,14 @@ class COCOPersonsSequence(tf.keras.utils.Sequence):
             im = im.convert('RGB')
         return np.asarray(im)
 
-    def _read_files(self, flist):
-        im_list, box_list = [], []
-        for filename in flist:
-            boxes = []
-            im = self._read_image(filename)
-            filename = os.path.extsep.join([os.path.splitext(filename)[0], 'txt'])
-            with open(os.path.join(self._label_dir, filename)) as f:
-                for line in f.readlines():
-                    boxes.append(self._parse_line(line))
-            im, boxes = self._map_fn(im, np.array(boxes))
-            box_list.append(boxes)
-            im_list.append(im)
-        return np.stack(im_list, axis=0), box_list
+    def _read_files(self, filename):
+        boxes = []
+        im = self._read_image(filename)
+        filename = os.path.extsep.join([os.path.splitext(filename)[0], 'txt'])
+        with open(os.path.join(self._label_dir, filename)) as f:
+            for line in f.readlines():
+                boxes.append(self._parse_line(line))
+        return self._map_fn(im, np.array(boxes))
 
     def clip_boxes(self, boxes):
         """Clip boxes to fit in an image."""
@@ -85,32 +74,39 @@ class COCOPersonsSequence(tf.keras.utils.Sequence):
         output_image = np.zeros((*self._output_size, c))
         output_image[:scaled_height, :scaled_width, :] = scaled_image
 
-        boxes /= image_scale
+        boxes *= image_scale
         boxes = self.clip_boxes(boxes)
         boxes = boxes[(boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1]) > 0.]  # sane boxes only allowed
         return output_image, boxes
 
-    def on_epoch_end(self):
-        self._idx = 0
-        if self._shuffle:
-            np.random.shuffle(self._flist)
-
     def __len__(self):
-        return math.ceil(len(self._flist) / self.batch_size)
+        return len(self._flist)
 
     def __getitem__(self, idx):
-        flist = self._flist[idx * self.batch_size: (idx + 1) * self.batch_size]
+        flist = self._flist[idx]
         return self._read_files(flist)
 
     def __call__(self):
-        images, boxes = self[self._idx]
-        self._idx += 1
+        if self._shuffle:
+            np.random.shuffle(self._flist)
 
-        if self._idx == len(self):
-            self.on_epoch_end()
+        for i in range(len(self)):
+            image, boxes = self[i]
+            yield (tf.convert_to_tensor(image, dtype=tf.float32),
+                   tf.RaggedTensor.from_tensor(tf.convert_to_tensor(boxes, dtype=tf.float32)))
 
-        yield (tf.convert_to_tensor(images, dtype=tf.float32),
-               tf.ragged.stack([tf.convert_to_tensor(bb, dtype=tf.float32) for bb in boxes]))
+
+def partition(ds, ds_size, train_split=0.8, val_split=0.1, test_split=0.1):
+    assert (train_split + test_split + val_split) == 1.
+
+    train_size = int(train_split * ds_size)
+    val_size = int(val_split * ds_size)
+
+    train_ds = ds.take(train_size)
+    val_ds = ds.skip(train_size).take(val_size)
+    test_ds = ds.skip(train_size).skip(val_size)
+
+    return train_ds, val_ds, test_ds
 
 
 def main(download_model=False):
@@ -122,11 +118,12 @@ def main(download_model=False):
 
     config = hparams_config.get_efficientdet_config(model_name)
     output_size = utils.parse_image_size(config.image_size)
-    dseq = COCOPersonsSequence('downloaded_images', 'labels', output_size, batch_size=2, shuffle=False)
+    batch_size = 2
+    dseq = COCOPersonsSequence('downloaded_images', 'labels', output_size, config.mean_rgb, config.stddev_rgb)
     dgen = tf.data.Dataset.from_generator(dseq, output_signature=(
-         tf.TensorSpec(shape=(None, None, None, 3), dtype=tf.float32),
-         tf.RaggedTensorSpec(shape=(None, None, 4), dtype=tf.float32)))
-    print(dgen.get_single_element())
+        tf.TensorSpec(shape=(*output_size, 3), dtype=tf.float32),
+        tf.RaggedTensorSpec(shape=(None, 4), dtype=tf.float32))).batch(batch_size).prefetch(2)
+    print([(x.shape, y.shape) for x, y in dgen.take(2)])
 
 
 if __name__ == '__main__':
