@@ -19,14 +19,14 @@ import utils
 
 class COCOPersonsSequence(tf.keras.utils.Sequence):
 
-    def __init__(self, img_dir, label_dir, output_size, mean_rgb, stddev_rgb, *, shuffle=True):
+    def __init__(self, img_dir, label_dir, output_size, mean_rgb, stddev_rgb, *, file_list=None, shuffle=True):
         super().__init__()
         self._img_dir = img_dir
         self._label_dir = label_dir
         self._output_size = output_size
         self._mean_rgb = mean_rgb
         self._stddev_rgb = stddev_rgb
-        self._flist = os.listdir(self._img_dir)
+        self._flist = file_list or os.listdir(self._img_dir)
         self._shuffle = shuffle
 
     @staticmethod
@@ -70,6 +70,7 @@ class COCOPersonsSequence(tf.keras.utils.Sequence):
         scaled_height = int(h * image_scale)
         scaled_width = int(w * image_scale)
 
+
         scaled_image = cv2.resize(image, [scaled_width, scaled_height])
         output_image = np.zeros((*self._output_size, c))
         output_image[:scaled_height, :scaled_width, :] = scaled_image
@@ -96,15 +97,27 @@ class COCOPersonsSequence(tf.keras.utils.Sequence):
                    tf.RaggedTensor.from_tensor(tf.convert_to_tensor(boxes, dtype=tf.float32)))
 
 
-def partition(ds, ds_size, train_split=0.8, val_split=0.1, test_split=0.1):
+def partition(config, img_dir, label_dir, train_split=0.8, val_split=0.1, test_split=0.1, *, batch_size=2,
+              shuffle=True):
     assert (train_split + test_split + val_split) == 1.
+
+    file_list = os.listdir(img_dir)
+    ds_size = len(file_list)
 
     train_size = int(train_split * ds_size)
     val_size = int(val_split * ds_size)
 
-    train_ds = ds.take(train_size)
-    val_ds = ds.skip(train_size).take(val_size)
-    test_ds = ds.skip(train_size).skip(val_size)
+    def get_tf_dataset(start, end):
+        output_size = utils.parse_image_size(config.image_size)
+        dseq = COCOPersonsSequence(img_dir, label_dir, output_size, config.mean_rgb, config.stddev_rgb,
+                                   file_list=file_list[start:end], shuffle=shuffle)
+        return tf.data.Dataset.from_generator(dseq, output_signature=(
+            tf.TensorSpec(shape=(*output_size, 3), dtype=tf.float32),
+            tf.RaggedTensorSpec(shape=(None, 4), dtype=tf.float32))).batch(batch_size).prefetch(10)
+
+    train_ds = get_tf_dataset(0, train_size)
+    val_ds = get_tf_dataset(train_size, train_size+val_size)
+    test_ds = get_tf_dataset(train_size+val_size, ds_size)
 
     return train_ds, val_ds, test_ds
 
@@ -117,13 +130,12 @@ def main(download_model=False):
         util.download(model_name)
 
     config = hparams_config.get_efficientdet_config(model_name)
-    output_size = utils.parse_image_size(config.image_size)
-    batch_size = 2
-    dseq = COCOPersonsSequence('downloaded_images', 'labels', output_size, config.mean_rgb, config.stddev_rgb)
-    dgen = tf.data.Dataset.from_generator(dseq, output_signature=(
-        tf.TensorSpec(shape=(*output_size, 3), dtype=tf.float32),
-        tf.RaggedTensorSpec(shape=(None, 4), dtype=tf.float32))).batch(batch_size).prefetch(2)
-    print([(x.shape, y.shape) for x, y in dgen.take(2)])
+    train_ds, val_ds, test_ds = partition(config, 'downloaded_images', 'labels')
+    print([(x.shape, y.shape) for x, y in train_ds.take(2)])
+    print('=============')
+    print([(x.shape, y.shape) for x, y in val_ds.take(2)])
+    print('=============')
+    print([(x.shape, y.shape) for x, y in test_ds.take(2)])
 
 
 if __name__ == '__main__':

@@ -15,10 +15,9 @@ import numpy as np
 import tensorflow as tf
 
 import metrics
+import custom_callbacks
 import train_data_generator
 import util
-import utils
-import tb_visualize
 from tf2 import postprocess, efficientdet_keras, infer_lib
 
 logger = util.get_logger(__name__)
@@ -28,7 +27,8 @@ MODEL = 'efficientdet-lite4'
 class PatchAttacker(tf.keras.Model):
     """attack with malicious patches"""
 
-    def __init__(self, model: efficientdet_keras.EfficientDetModel, patch_loss_multiplier=1e-5, iou=.5):
+    def __init__(self, model: efficientdet_keras.EfficientDetModel, patch_loss_multiplier=1e-5, iou=.5,
+                 min_patch_area=900, visualize_freq=200):
         super().__init__(name='Attacker_Graph')
         self.model = model
         self.config = self.model.config
@@ -41,16 +41,23 @@ class PatchAttacker(tf.keras.Model):
         # patch_img = np.ones((256, 256, 3), dtype=float) * self.config.mean_rgb
         self._patch = tf.Variable(patch_img, trainable=True, name='patch', dtype=tf.float32,
                                   constraint=lambda x: tf.clip_by_value(x, 0., 1.))
+        self.visualize_freq = tf.constant(visualize_freq, tf.int64)
         self._patcher = Patcher(self._patch, name='Patcher')
         self._grad_processor = GradientProcessor(self._patch.shape, name='Gradient_Processor')
         self._images = None
         self._labels = None
-        self._boxes_pred = None
-        self._metric = metrics.Recall(iou_thresh=iou)
+        self.cur_train_step = tf.Variable(0, trainable=False, dtype=tf.int64)
+        self.cur_test_step = tf.Variable(0, trainable=False, dtype=tf.int64)
+        tf.constant(1, tf.int64)
+        self.cur_step = None
+        self.tb = None
+
+        patcher_scale = self._patcher.scale
+        self._metric = metrics.AttackSuccessRate(min_patch_area / patcher_scale, iou_thresh=iou)
         self._patch_loss_multiplier = tf.constant(patch_loss_multiplier, tf.float32)
 
     def get_patch(self):
-        return (self._patch.numpy() * 255.).astype('uint8')
+        return (self._patch.numpy() * self.config.stddev_rgb + self.config.mean_rgb).astype('uint8')
 
     def first_pass(self, images):
         boxes, scores, classes, _ = self.model(images, pre_mode=None)
@@ -73,6 +80,9 @@ class PatchAttacker(tf.keras.Model):
 
         boxes = tf.ragged.boolean_mask(boxes, person_indices)
         classes = tf.ragged.boolean_mask(classes, person_indices)
+        return boxes, scores, classes
+
+    def _postprocessing(self, boxes, scores, classes):
 
         def single_batch_fn(element):
             return postprocess.nms(self.config, element[0], element[1], element[2], True)
@@ -82,7 +92,7 @@ class PatchAttacker(tf.keras.Model):
         nms_boxes = postprocess.clip_boxes(nms_boxes, self.config.image_size)
         nms_boxes = tf.RaggedTensor.from_tensor(nms_boxes, lengths=nms_valid_len)
         nms_scores = tf.RaggedTensor.from_tensor(nms_scores, lengths=nms_valid_len)
-        return scores, nms_boxes, nms_scores
+        return nms_boxes, nms_scores
 
     def call(self, inputs, *, training=True):
         if isinstance(inputs, (tuple, list)):
@@ -103,22 +113,45 @@ class PatchAttacker(tf.keras.Model):
         patch_boxes, transform_decisions = self._patcher([boxes, self._images])
 
         with tf.GradientTape(persistent=True) as tape:
-            scores, boxes_pred, scores_pred = self.second_pass(self._images)
+            boxes_pred, scores, classes = self.second_pass(self._images)
             loss = tf.reduce_max(scores)
             tv_loss = self.tv_loss()
 
         self.add_loss(loss)
         self.add_loss(tv_loss)
-        self.add_metric(self._metric(boxes_pred, boxes), name='recall')
 
-        self._boxes_pred = boxes_pred
+        boxes_pred, scores_pred = self._postprocessing(boxes_pred, scores, classes)
+        self.add_metric(self._metric(boxes_pred, boxes), name='mean_asr')
+
+        func = functools.partial(self.vis_images, boxes_pred, training)
+        tf.cond(tf.equal(tf.math.floormod(self.cur_step, self.visualize_freq), tf.constant(0, tf.int64)),
+                func, lambda: None)
 
         if training:
             gradients = tape.gradient(loss, self._images)
             gradients = self._grad_processor([gradients, patch_boxes, transform_decisions])
             gradients = gradients + tape.gradient(tv_loss, self._patch)
             return gradients
+
         return boxes_pred, scores_pred
+
+    def vis_images(self, boxes_pred, training):
+        images, labels = self._images, self._labels
+        _, h, w, _ = tf.unstack(tf.cast(tf.shape(images), tf.float32))
+
+        def convert_format(box):
+            ymin, xmin, ymax, xmax = tf.unstack(box.to_tensor(), axis=2)
+            return tf.stack([ymin / h, xmin / w, ymax / h, xmax / w], axis=2)
+
+        labels = convert_format(labels)
+        boxes_pred = convert_format(boxes_pred)
+        images = tf.image.draw_bounding_boxes(images, labels, tf.constant([[0., 1., 0.]]))
+        images = tf.image.draw_bounding_boxes(images, boxes_pred, tf.constant([[0., 0., 1.]]))
+        tr = 'train' if training else 'val'
+        with self.tb._writers[tr].as_default():
+            if training:
+                tf.summary.image('Current patch', self._patch[tf.newaxis], step=self.cur_step)
+            tf.summary.image('Sample', images, step=self.cur_step)
 
     def tv_loss(self):
         """TV loss"""
@@ -128,37 +161,30 @@ class PatchAttacker(tf.keras.Model):
                               (self._patch - pixel_down) ** 2.) ** .5) * self._patch_loss_multiplier
 
     def train_step(self, inputs):
+        self.cur_step = self.cur_train_step
+        self.cur_step.assign_add(tf.constant(1, tf.int64))
+        self.reset_state()
         grads = self(inputs)
         grads = tf.where(tf.math.is_nan(grads), tf.zeros_like(grads), grads)
         self.optimizer.apply_gradients([(grads, self._patch)])
-        ret = {'score_loss': self.losses[0], 'tv_loss': self.losses[1]}
+        ret = {'loss': self.losses[0], 'tv_loss': self.losses[1]}
         ret.update({m.name: m.result() for m in self.metrics})
         return ret
 
     def test_step(self, inputs):
+        self.cur_step = self.cur_test_step
+        self.cur_step.assign_add(tf.constant(1, tf.int64))
+        self.reset_state()
         self(inputs, training=False)
-        ret = {'score_loss': self.losses[0], 'tv_loss': self.losses[1]}
+        ret = {'loss': self.losses[0], 'tv_loss': self.losses[1]}
         ret.update({m.name: m.result() for m in self.metrics})
         return ret
 
-    def get_vis_images(self):
-        images = self._images
-        labels = self._labels
-        preds = self._boxes_pred
+    def reset_state(self):
+        self._labels = None
 
-        _, h, w, _ = tf.unstack(tf.cast(tf.shape(images), tf.float32))
-
-        def convert_format(box):
-            ymin, xmin, ymax, xmax = tf.unstack(box.to_tensor(), axis=2)
-            return tf.stack([ymin / h, xmin / w, ymax / h, xmax / w], axis=2)
-
-        labels = convert_format(labels)
-        preds = convert_format(preds)
-        images = tf.image.draw_bounding_boxes(images, labels, tf.constant([[0., 1., 0.]]))
-        images = tf.image.draw_bounding_boxes(images, preds, tf.constant([[0., 0., 1.]]))
-
-        patch = self._patch[tf.newaxis] * tf.constant(255.)
-        return images, patch
+    def save_weights(self, filepath, **kwargs):
+        plt.imsave(filepath, self.get_patch())
 
 
 class GradientProcessor(tf.keras.layers.Layer):
@@ -228,7 +254,8 @@ class Patcher(tf.keras.layers.Layer):
         tf.while_loop(lambda _, i: tf.less(self._patch_counter, tf.shape(patch_boxes)[0]),
                       loop_fn, [self._patch_counter, transform_decisions])
         self._batch_counter.assign_add(tf.constant(1))
-        return tf.RaggedTensor.from_tensor(tf.concat([patch_boxes, tf.cast(transform_decisions, tf.float32)], axis=1))
+        return tf.RaggedTensor.from_tensor(tf.concat([patch_boxes, tf.cast(transform_decisions, tf.float32)], axis=1),
+                                           row_splits_dtype=tf.int32)
 
     def add_patch_to_image(self, patch_boxes, _, transform_decisions):
         ymin_patch, xmin_patch, patch_h, patch_w = tf.unstack(tf.cast(patch_boxes[self._patch_counter], tf.int32))
@@ -266,10 +293,20 @@ class Patcher(tf.keras.layers.Layer):
     def call(self, inputs, *args, **kwargs):
         batch_boxes, self._images = inputs
         self._batch_counter.assign(tf.constant(0))
-        result = tf.map_fn(self.add_patches_to_image, batch_boxes)
+        result = tf.map_fn(self.add_patches_to_image, batch_boxes,
+                           fn_output_signature=tf.RaggedTensorSpec((None, 7), tf.float32, 1, tf.int32))
         patch_boxes = result[:, :, :4]
         transform_decisions = tf.cast(result[:, :, 4:], tf.bool)
         return patch_boxes, transform_decisions
+
+
+def ensure_empty_dir(dirname):
+    try:
+        os.makedirs(dirname)
+    except FileExistsError:
+        shutil.rmtree(dirname, ignore_errors=True)
+        os.makedirs(dirname)
+    return dirname
 
 
 def main(download_model=False):
@@ -281,13 +318,7 @@ def main(download_model=False):
         util.download(MODEL)
         logger.info(f'Using model in {MODEL}')
 
-    log_dir = 'log_dir'
-    try:
-        os.makedirs(log_dir)
-    except FileExistsError:
-        shutil.rmtree(log_dir, ignore_errors=True)
-        os.makedirs(log_dir)
-
+    log_dir = ensure_empty_dir('log_dir')
     gpus = tf.config.list_physical_devices('GPU')
     if gpus:
         for gpu in gpus:
@@ -295,16 +326,30 @@ def main(download_model=False):
 
     driver = infer_lib.KerasDriver(MODEL, debug=False, model_name=MODEL)
     model = PatchAttacker(driver.model)
-    model.compile(optimizer='adam', run_eagerly=True)
-    output_size = utils.parse_image_size(model.config.image_size)
-    batch_size = 1
-    data_gen = train_data_generator.COCOPersonsSequence('downloaded_images', 'labels', output_size,
-                                                        model.config.mean_rgb, model.config.stddev_rgb, shuffle=False)
-    data_set = tf.data.Dataset.from_generator(data_gen, output_signature=(
-        tf.TensorSpec(shape=(*output_size, 3), dtype=tf.float32),
-        tf.RaggedTensorSpec(shape=(None, 4), dtype=tf.float32))).batch(batch_size).prefetch(10).repeat(-1)
-    history = model.fit(data_set, epochs=1, steps_per_epoch=2,  # len(data_gen),
-                        callbacks=[tb_visualize.TensorboardCallback(log_dir, write_graph=True)])
+    model.compile(optimizer='adam', run_eagerly=False)
+
+    train_ds, val_ds, test_ds = train_data_generator.partition(model.config, 'downloaded_images', 'labels',
+                                                               batch_size=1, shuffle=False)
+
+    tb_callback = custom_callbacks.TensorboardCallback(log_dir, write_graph=True)
+    model.tb = tb_callback
+
+    save_dir = ensure_empty_dir('save_dir')
+    save_file = 'patch_{epoch:02d}.png'
+    history = model.fit(train_ds, validation_data=val_ds, epochs=10, steps_per_epoch=2,  # len(data_gen),
+                        validation_steps=2,
+                        callbacks=[tb_callback,
+                                   tf.keras.callbacks.ModelCheckpoint(os.path.join(save_dir, save_file),
+                                                                      monitor='val_loss',
+                                                                      verbose=1,
+                                                                      save_best_only=True,
+                                                                      save_weights_only=True,
+                                                                      mode='auto',
+                                                                      save_freq='epoch',
+                                                                      options=None,
+                                                                      initial_value_threshold=None,
+                                                                      )
+                                   ])
     patch = model.get_patch()
     plt.imshow(patch)
     plt.show()
