@@ -70,7 +70,6 @@ class COCOPersonsSequence(tf.keras.utils.Sequence):
         scaled_height = int(h * image_scale)
         scaled_width = int(w * image_scale)
 
-
         scaled_image = cv2.resize(image, [scaled_width, scaled_height])
         output_image = np.zeros((*self._output_size, c))
         output_image[:scaled_height, :scaled_width, :] = scaled_image
@@ -119,7 +118,9 @@ def partition(config, img_dir, label_dir, train_split=0.8, val_split=0.1, test_s
     val_ds = get_tf_dataset(train_size, train_size+val_size)
     test_ds = get_tf_dataset(train_size+val_size, ds_size)
 
-    return train_ds, val_ds, test_ds
+    return {'train': {'dataset': train_ds, 'length': train_size},
+            'val': {'dataset': val_ds, 'length': val_size},
+            'test': {'dataset': test_ds, 'length': ds_size - val_size - train_size}}
 
 
 def main(download_model=False):

@@ -34,7 +34,8 @@ class PatchAttacker(tf.keras.Model):
         self.config = self.model.config
 
         iou = iou
-        self.model.config.override({'nms_configs': {'iou_thresh': iou, 'score_thresh': .5}})
+        self.model.config.override({'nms_configs': {'iou_thresh': iou, 'score_thresh': .5},
+                                    'image_size': 300})
         patch_img = (np.random.rand(256, 256, 3) * 255.).astype('uint8').astype(float)
         patch_img -= self.config.mean_rgb
         patch_img /= self.config.stddev_rgb
@@ -85,10 +86,14 @@ class PatchAttacker(tf.keras.Model):
     def _postprocessing(self, boxes, scores, classes):
 
         def single_batch_fn(element):
-            return postprocess.nms(self.config, element[0], element[1], element[2], True)
+            return postprocess.nms(self.config, boxes[element], scores[element], classes[element], True)
 
-        nms_boxes, nms_scores, nms_classes, nms_valid_len = postprocess.batch_map_fn(
-            single_batch_fn, [boxes, scores, classes])
+        nms_boxes, nms_scores, nms_classes, nms_valid_len = tf.map_fn(single_batch_fn, tf.range(boxes.nrows()),
+                                                                      fn_output_signature=(
+                                                                      tf.TensorSpec((None, 4), dtype=tf.float32),
+                                                                      tf.TensorSpec((None,), dtype=tf.float32),
+                                                                      tf.TensorSpec((None,), dtype=tf.float32),
+                                                                      tf.TensorSpec((), dtype=tf.int32)))
         nms_boxes = postprocess.clip_boxes(nms_boxes, self.config.image_size)
         nms_boxes = tf.RaggedTensor.from_tensor(nms_boxes, lengths=nms_valid_len)
         nms_scores = tf.RaggedTensor.from_tensor(nms_scores, lengths=nms_valid_len)
@@ -300,6 +305,16 @@ class Patcher(tf.keras.layers.Layer):
         return patch_boxes, transform_decisions
 
 
+def get_victim_model(download_model=False):
+    if download_model:
+        # Download checkpoint.
+        util.download(MODEL)
+
+    logger.info(f'Using model in {MODEL}')
+    driver = infer_lib.KerasDriver(MODEL, debug=False, model_name=MODEL)
+    return driver.model
+
+
 def ensure_empty_dir(dirname):
     try:
         os.makedirs(dirname)
@@ -313,25 +328,24 @@ def main(download_model=False):
     # noinspection PyShadowingNames
     logger = util.get_logger(__name__, logging.DEBUG)
 
-    if download_model:
-        # Download checkpoint.
-        util.download(MODEL)
-        logger.info(f'Using model in {MODEL}')
-
     log_dir = ensure_empty_dir('log_dir')
     gpus = tf.config.list_physical_devices('GPU')
     if gpus:
         for gpu in gpus:
             tf.config.experimental.set_memory_growth(gpu, True)
 
-    driver = infer_lib.KerasDriver(MODEL, debug=False, model_name=MODEL)
-    model = PatchAttacker(driver.model)
+    victim_model = get_victim_model(download_model)
+    model = PatchAttacker(victim_model)
     model.compile(optimizer='adam', run_eagerly=False)
 
-    train_ds, val_ds, test_ds = train_data_generator.partition(model.config, 'downloaded_images', 'labels',
-                                                               batch_size=1, shuffle=False)
+    datasets: dict = train_data_generator.partition(model.config, 'downloaded_images', 'labels',
+                                                    batch_size=2, shuffle=False)
 
-    tb_callback = custom_callbacks.TensorboardCallback(log_dir, write_graph=True)
+    train_ds = datasets['train']['dataset']
+    val_ds = datasets['val']['dataset']
+    train_len = datasets['train']['length']
+    val_len = datasets['val']['length']
+    tb_callback = custom_callbacks.TensorboardCallback(log_dir, write_graph=True, write_steps_per_second=True)
     model.tb = tb_callback
 
     save_dir = ensure_empty_dir('save_dir')

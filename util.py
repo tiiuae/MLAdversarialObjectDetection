@@ -10,7 +10,6 @@ import os
 import tarfile
 
 import requests
-import tensorflow as tf
 
 
 def convert_to_hw_format(bbox):
