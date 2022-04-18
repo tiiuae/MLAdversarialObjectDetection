@@ -34,8 +34,7 @@ class PatchAttacker(tf.keras.Model):
         self.config = self.model.config
 
         iou = iou
-        self.model.config.override({'nms_configs': {'iou_thresh': iou, 'score_thresh': .5},
-                                    'image_size': 300})
+        self.model.config.override({'nms_configs': {'iou_thresh': iou, 'score_thresh': .5}})
         patch_img = (np.random.rand(256, 256, 3) * 255.).astype('uint8').astype(float)
         patch_img -= self.config.mean_rgb
         patch_img /= self.config.stddev_rgb
@@ -350,8 +349,8 @@ def main(download_model=False):
 
     save_dir = ensure_empty_dir('save_dir')
     save_file = 'patch_{epoch:02d}.png'
-    history = model.fit(train_ds, validation_data=val_ds, epochs=10, steps_per_epoch=2,  # len(data_gen),
-                        validation_steps=2,
+    history = model.fit(train_ds, validation_data=val_ds, epochs=10, steps_per_epoch=train_len,
+                        validation_steps=val_len,
                         callbacks=[tb_callback,
                                    tf.keras.callbacks.ModelCheckpoint(os.path.join(save_dir, save_file),
                                                                       monitor='val_loss',

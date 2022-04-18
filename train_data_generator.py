@@ -5,6 +5,7 @@ Created: April 12, 2022
 
 Purpose: data generator for training physical adversarial attacker on COCO persons
 """
+import math
 import os
 
 import cv2
@@ -118,9 +119,9 @@ def partition(config, img_dir, label_dir, train_split=0.8, val_split=0.1, test_s
     val_ds = get_tf_dataset(train_size, train_size+val_size)
     test_ds = get_tf_dataset(train_size+val_size, ds_size)
 
-    return {'train': {'dataset': train_ds, 'length': train_size},
-            'val': {'dataset': val_ds, 'length': val_size},
-            'test': {'dataset': test_ds, 'length': ds_size - val_size - train_size}}
+    return {'train': {'dataset': train_ds, 'length': math.ceil(train_size / batch_size)},
+            'val': {'dataset': val_ds, 'length': math.ceil(val_size / batch_size)},
+            'test': {'dataset': test_ds, 'length': math.ceil((ds_size - val_size - train_size) / batch_size)}}
 
 
 def main(download_model=False):

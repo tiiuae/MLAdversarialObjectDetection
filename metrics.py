@@ -32,8 +32,14 @@ class AttackSuccessRate:
             boxes_gt_area = tf.gather_nd(boxes_gt_area, atk_attempts)
 
             atk_attempt_count = tf.cast(tf.shape(boxes_gt)[0], tf.float32) + tf.constant(1e-6)
+
+            def atk_failed():
+                return tf.reduce_sum(tf.cast(tf.reduce_any(tf.map_fn(func, boxes_pred[self._loop_var], dtype=tf.bool),
+                                                           axis=0), tf.float32))
+
             func = functools.partial(self._calc_valid, boxes_gt, boxes_gt_area)
-            atk_failed_count = tf.reduce_sum(tf.map_fn(func, boxes_pred[self._loop_var])) + tf.constant(1e-6)
+            atk_failed_count = tf.cond(tf.greater(tf.shape(boxes_pred[self._loop_var])[0], tf.constant(0)),
+                                       atk_failed, lambda: tf.constant(0.)) + tf.constant(1e-6)
             atk_success_rate = tf.constant(1.) - atk_failed_count / atk_attempt_count
 
             tf.assert_equal(tf.greater_equal(atk_success_rate, tf.constant(0.)), tf.constant(True))
@@ -58,10 +64,11 @@ class AttackSuccessRate:
         inter_area = tf.math.maximum(tf.constant(0.),
                                      x_b - x_a + tf.constant(1.)) * tf.math.maximum(tf.constant(0.),
                                                                                     y_b - y_a + tf.constant(1.))
-        box_area = (box[2] - box[0] + tf.constant(1.)) * (box[3] - box[1] + tf.constant(1.))
-        return tf.greater(inter_area / (box_area + box_gt_area - inter_area), self._iou_thresh)
+        box_area = (box[2] - box[0]) * (box[3] - box[1])
+        cond1 = tf.greater(box_area, self._min_bbox_area)
+        cond2 = tf.greater(inter_area / (box_area + box_gt_area - inter_area), self._iou_thresh)
+        return tf.logical_and(cond1, cond2)
 
     def _calc_valid(self, boxes_gt, boxes_gt_area, box):
         fn = functools.partial(self._is_valid, boxes_gt, boxes_gt_area, box)
-        return tf.cast(tf.reduce_any(tf.map_fn(fn, tf.range(tf.shape(boxes_gt)[0]), fn_output_signature=tf.bool)),
-                       tf.float32)
+        return tf.map_fn(fn, tf.range(tf.shape(boxes_gt)[0]), fn_output_signature=tf.TensorSpec((), tf.bool))
