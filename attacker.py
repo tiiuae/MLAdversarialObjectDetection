@@ -27,8 +27,8 @@ MODEL = 'efficientdet-lite4'
 class PatchAttacker(tf.keras.Model):
     """attack with malicious patches"""
 
-    def __init__(self, model: efficientdet_keras.EfficientDetModel, patch_loss_multiplier=0., iou=.5,
-                 min_patch_height=60, visualize_freq=200):
+    def __init__(self, model: efficientdet_keras.EfficientDetModel, patch_loss_multiplier=1e-2, iou=.5,
+                 min_patch_height=1, visualize_freq=200):
         super().__init__(name='Attacker_Graph')
         self.model = model
         self.config = self.model.config
@@ -118,7 +118,7 @@ class PatchAttacker(tf.keras.Model):
 
         with tf.GradientTape(persistent=True) as tape:
             boxes_pred, scores, classes = self.second_pass(self._images)
-            loss = tf.reduce_max(scores)
+            loss = tf.reduce_sum(tf.reduce_max(scores, axis=1))
             tv_loss = self.tv_loss()
 
         self.add_loss(loss)
@@ -281,8 +281,8 @@ class Patcher(tf.keras.layers.Layer):
         h = ymax - ymin
         w = xmax - xmin
 
-        patch_h = h * self.scale
-        patch_w = self.aspect * patch_h
+        patch_w = h * self.scale
+        patch_h = self.aspect * patch_w
 
         orig_y = ymin + h / 2.
         orig_x = xmin + w / 2.

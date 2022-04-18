@@ -84,10 +84,16 @@ class COCOPersonsSequence(tf.keras.utils.Sequence):
         if self._shuffle:
             np.random.shuffle(self._flist)
 
-        for i in range(len(self)):
+        i = 0
+        while True:
             image, boxes = self[i]
             yield (tf.convert_to_tensor(image, dtype=tf.float32),
                    tf.RaggedTensor.from_tensor(tf.convert_to_tensor(boxes, dtype=tf.float32)))
+            i += 1
+            if i == len(self):
+                if self._shuffle:
+                    np.random.shuffle(self._flist)
+                i = 0
 
 
 def _parse_line(line):
@@ -102,6 +108,7 @@ def _read_image(img_dir, filename):
 
 
 def filter_by_dims(img_dir, label_dir, min_height_ratio, min_width_ratio, aspect, filename):
+    return True
     im = _read_image(img_dir, filename)
     h, w, _ = im.shape
     filename = os.path.extsep.join([os.path.splitext(filename)[0], 'txt'])
@@ -139,7 +146,7 @@ def partition(config, img_dir, label_dir, min_height_ratio=.7, min_width_ratio=.
                                    file_list=file_list[start:end], shuffle=shuffle)
         return tf.data.Dataset.from_generator(dseq, output_signature=(
             tf.TensorSpec(shape=(*output_size, 3), dtype=tf.float32),
-            tf.RaggedTensorSpec(shape=(None, 4), dtype=tf.float32))).batch(batch_size).repeat(-1).prefetch(10)
+            tf.RaggedTensorSpec(shape=(None, 4), dtype=tf.float32))).batch(batch_size).prefetch(10)
 
     train_ds = get_tf_dataset(0, train_size)
     val_ds = get_tf_dataset(train_size, train_size+val_size)
