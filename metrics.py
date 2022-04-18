@@ -11,8 +11,8 @@ import tensorflow as tf
 
 
 class AttackSuccessRate:
-    def __init__(self, min_bbox_area, *, iou_thresh=.5, ):
-        self._min_bbox_area = tf.constant(min_bbox_area, tf.float32)
+    def __init__(self, min_bbox_height, *, iou_thresh=.5, ):
+        self._min_bbox_height = tf.constant(min_bbox_height, tf.float32)
         self._iou_thresh = tf.constant(iou_thresh, tf.float32)
         self._loop_var = tf.Variable(0, trainable=False, dtype=tf.int32)
         self._result = None
@@ -26,8 +26,10 @@ class AttackSuccessRate:
 
         def map_fn(_):
             boxes_gt = boxes_true[self._loop_var].to_tensor()
-            boxes_gt_area = (boxes_gt[:, 2] - boxes_gt[:, 0]) * (boxes_gt[:, 3] - boxes_gt[:, 1])
-            atk_attempts = tf.where(tf.greater(boxes_gt_area, self._min_bbox_area))
+            boxes_gt_height = boxes_gt[:, 2] - boxes_gt[:, 0]
+            boxes_gt_width = boxes_gt[:, 3] - boxes_gt[:, 1]
+            boxes_gt_area = boxes_gt_height * boxes_gt_width
+            atk_attempts = tf.where(tf.greater(boxes_gt_height, self._min_bbox_height))
             boxes_gt = tf.gather_nd(boxes_gt, atk_attempts)
             boxes_gt_area = tf.gather_nd(boxes_gt_area, atk_attempts)
 
@@ -64,8 +66,10 @@ class AttackSuccessRate:
         inter_area = tf.math.maximum(tf.constant(0.),
                                      x_b - x_a + tf.constant(1.)) * tf.math.maximum(tf.constant(0.),
                                                                                     y_b - y_a + tf.constant(1.))
-        box_area = (box[2] - box[0]) * (box[3] - box[1])
-        cond1 = tf.greater(box_area, self._min_bbox_area)
+        box_h = box[2] - box[0]
+        box_w = box[3] - box[1]
+        box_area = box_h * box_w
+        cond1 = tf.greater(box_h, self._min_bbox_height)
         cond2 = tf.greater(inter_area / (box_area + box_gt_area - inter_area), self._iou_thresh)
         return tf.logical_and(cond1, cond2)
 

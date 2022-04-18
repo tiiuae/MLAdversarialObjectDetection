@@ -27,8 +27,8 @@ MODEL = 'efficientdet-lite4'
 class PatchAttacker(tf.keras.Model):
     """attack with malicious patches"""
 
-    def __init__(self, model: efficientdet_keras.EfficientDetModel, patch_loss_multiplier=1e-5, iou=.5,
-                 min_patch_area=900, visualize_freq=200):
+    def __init__(self, model: efficientdet_keras.EfficientDetModel, patch_loss_multiplier=0., iou=.5,
+                 min_patch_height=60, visualize_freq=200):
         super().__init__(name='Attacker_Graph')
         self.model = model
         self.config = self.model.config
@@ -42,7 +42,7 @@ class PatchAttacker(tf.keras.Model):
         self._patch = tf.Variable(patch_img, trainable=True, name='patch', dtype=tf.float32,
                                   constraint=lambda x: tf.clip_by_value(x, 0., 1.))
         self.visualize_freq = tf.constant(visualize_freq, tf.int64)
-        self._patcher = Patcher(self._patch, name='Patcher')
+        self._patcher = Patcher(self._patch, min_patch_height=min_patch_height, name='Patcher')
         self._grad_processor = GradientProcessor(self._patch.shape, name='Gradient_Processor')
         self._images = None
         self._labels = None
@@ -53,7 +53,7 @@ class PatchAttacker(tf.keras.Model):
         self.tb = None
 
         patcher_scale = self._patcher.scale
-        self._metric = metrics.AttackSuccessRate(min_patch_area / patcher_scale, iou_thresh=iou)
+        self._metric = metrics.AttackSuccessRate(min_patch_height / patcher_scale, iou_thresh=iou)
         self._patch_loss_multiplier = tf.constant(patch_loss_multiplier, tf.float32)
 
     def get_patch(self):
@@ -236,7 +236,7 @@ class GradientProcessor(tf.keras.layers.Layer):
 
 
 class Patcher(tf.keras.layers.Layer):
-    def __init__(self, patch: tf.Variable, *args, aspect=1., origin=(.5, .5), scale=.2, **kwargs):
+    def __init__(self, patch: tf.Variable, *args, aspect=1., origin=(.5, .5), scale=.5, min_patch_height=60, **kwargs):
         super().__init__(*args, **kwargs)
         self._patch = patch
         self._batch_counter = tf.Variable(tf.constant(0), trainable=False)
@@ -245,13 +245,13 @@ class Patcher(tf.keras.layers.Layer):
         self.aspect = aspect
         self.origin = origin
         self.scale = scale
+        self.min_patch_height = min_patch_height
 
     def add_patches_to_image(self, boxes):
         self._patch_counter.assign(tf.constant(0))
         patch_boxes = tf.vectorized_map(self.create, boxes)
-        patch_boxes = tf.gather_nd(patch_boxes,
-                                   tf.where(tf.greater(tf.cast(patch_boxes[:, 2] * patch_boxes[:, 3], tf.int32),
-                                                       tf.constant(900))))
+        patch_boxes = tf.gather_nd(patch_boxes, tf.where(tf.greater(patch_boxes[:, 2],
+                                                                    tf.constant(self.min_patch_height, tf.float32))))
         transform_decisions = tf.cast(tf.random.uniform(shape=(tf.shape(patch_boxes)[0], 3), minval=0, maxval=2,
                                                         dtype=tf.int32), tf.bool)
         loop_fn = functools.partial(self.add_patch_to_image, patch_boxes)
@@ -270,6 +270,7 @@ class Patcher(tf.keras.layers.Layer):
 
         ymax = ymin_patch + patch_h
         xmax = xmin_patch + patch_w
+        tf.debugging.assert_greater_equal(xmin_patch, tf.constant(0))
         self._images[self._batch_counter, ymin_patch:ymax, xmin_patch:xmax].assign(im)
         self._patch_counter.assign_add(tf.constant(1))
         return [self._patch_counter, transform_decisions]
@@ -283,8 +284,11 @@ class Patcher(tf.keras.layers.Layer):
         patch_h = h * self.scale
         patch_w = self.aspect * patch_h
 
-        ymin_patch = ymin + h * self.origin[1]
-        xmin_patch = xmin + w * self.origin[0]
+        orig_y = ymin + h / 2.
+        orig_x = xmin + w / 2.
+
+        ymin_patch = tf.maximum(orig_y - patch_h / 2., 0.)
+        xmin_patch = tf.maximum(orig_x - patch_w / 2., 0.)
 
         shape = tf.cast(tf.shape(self._images), tf.float32)
         ymin_patch = tf.cond(tf.greater(ymin_patch + patch_h, shape[1]),
@@ -338,7 +342,7 @@ def main(download_model=False):
     model.compile(optimizer='adam', run_eagerly=False)
 
     datasets: dict = train_data_generator.partition(model.config, 'downloaded_images', 'labels',
-                                                    batch_size=2, shuffle=False)
+                                                    batch_size=2, shuffle=True)
 
     train_ds = datasets['train']['dataset']
     val_ds = datasets['val']['dataset']

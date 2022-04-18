@@ -21,7 +21,7 @@ def convert_to_hw_format(bbox):
     return ymin, xmin, ymax-ymin, xmax-xmin
 
 
-def get_logger(name, level=logging.ERROR):
+def get_logger(name, level=logging.INFO):
     """
     get a logger by name or create one if it doesn't exist
     :param name: the name
