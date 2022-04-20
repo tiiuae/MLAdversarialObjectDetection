@@ -5,8 +5,6 @@ Created: April 19, 2022
 
 Purpose: match histograms in tensorflow
 """
-import functools
-
 import tensorflow as tf
 
 
@@ -17,17 +15,14 @@ class HistogramMatcher(tf.keras.layers.Layer):
     def call(self, inputs, **kwargs):
         src, tgt = inputs
         h, w, _ = src.shape
+        floating_colorspace = tf.clip_by_value(tf.range(-1., 1.01, delta=1. / 127.), -1., 1.)
         res = []
         for i in range(3):
-            source, target = src[:, :, i:i+1], tgt[:, :, i:i+1]
+            source, target = src[:, :, i:i + 1], tgt[:, :, i:i + 1]
             cdfsrc = self.equalize_histogram(source)
             cdftgt = self.equalize_histogram(target)
-
-            fn = functools.partial(self.interpolate, cdftgt, tf.range(-1., 1., delta=1./256.))
-            pxmap = tf.vectorized_map(fn, cdfsrc)
-
-            fn = functools.partial(self.interpolate, cdfsrc, pxmap)
-            pxmap = tf.vectorized_map(fn,  tf.reshape(source, (h*w)))
+            pxmap = self.interpolate(cdftgt, floating_colorspace, cdfsrc)
+            pxmap = self.interpolate(floating_colorspace, pxmap, tf.reshape(source, (h * w)))
             res.append(tf.reshape(pxmap, (h, w)))
         return tf.stack(res, axis=2)
 
@@ -47,20 +42,21 @@ class HistogramMatcher(tf.keras.layers.Layer):
     def interpolate(dx_T, dy_T, x):
         with tf.name_scope('interpolate'):
             with tf.name_scope('neighbors'):
-                delVals = dx_T - x
-                ind_1 = tf.argmin(tf.abs(delVals))
-                ind_0 = ind_1 - 1
+                delVals = dx_T - x[:, tf.newaxis]
+                ind_1 = tf.argmin(tf.abs(delVals), axis=1)
+                ind_0 = tf.where(tf.greater(ind_1, 0), ind_1 - 1, 0)
 
             with tf.name_scope('calculation'):
-                value = tf.cond(tf.less_equal(x, dx_T[0]),
-                                lambda: dy_T[0],
-                                lambda: tf.cond(
-                                    tf.greater_equal(x, dx_T[-1]),
-                                    lambda: dy_T[-1],
-                                    lambda: (dy_T[ind_0] + (dy_T[ind_1] - dy_T[ind_0]) * (x - dx_T[ind_0]) /
-                                             (dx_T[ind_1] - dx_T[ind_0]))
-                                ))
-        return value
+                values = tf.where(tf.less_equal(x, dx_T[0]),
+                                  dy_T[0],
+                                  tf.where(
+                                      tf.greater_equal(x, dx_T[-1]),
+                                      dy_T[-1],
+                                      tf.gather(dy_T, ind_0) + (tf.gather(dy_T, ind_1) - tf.gather(dy_T, ind_0)) *
+                                      (x - tf.gather(dx_T, ind_0)) / (tf.gather(dx_T, ind_1) - tf.gather(dx_T, ind_0)))
+                                  )
+
+        return values
 
 
 def main():
@@ -83,7 +79,7 @@ def main():
     burj2.show('reference')
     res.show('result')
 
-    res1 = tf.convert_to_tensor(np.asarray(res))
+    res1 = tf.convert_to_tensor(np.asarray(res), dtype=tf.float32)
 
     res1 -= 127.
     res1 /= 127.
