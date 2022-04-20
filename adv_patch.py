@@ -131,7 +131,7 @@ def main():
     import matplotlib.pyplot as plt
     from matplotlib import patches
 
-    im = np.asarray(Image.open('cat-g0addf4857_640.jpg'))
+    im = np.asarray(Image.open('burj_khalifa_sunset.jpg'))
     adv_patch = AdversarialPatch(100, 100)
     bbox = ymin, xmin, h, w = 50, 125, 300, 400
     im = adv_patch.add_adv_to_img(im, bbox)

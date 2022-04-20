@@ -25,7 +25,7 @@ class AttackSuccessRate:
             self._result.assign(tf.zeros(shape=(batch_size,), dtype=tf.float32))
 
         def map_fn(_):
-            boxes_gt = boxes_true[self._loop_var].to_tensor()
+            boxes_gt = boxes_true[self._loop_var]
             boxes_gt_height = boxes_gt[:, 2] - boxes_gt[:, 0]
             boxes_gt_width = boxes_gt[:, 3] - boxes_gt[:, 1]
             boxes_gt_area = boxes_gt_height * boxes_gt_width
