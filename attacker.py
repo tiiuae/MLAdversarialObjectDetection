@@ -28,14 +28,13 @@ MODEL = 'efficientdet-lite4'
 class PatchAttacker(tf.keras.Model):
     """attack with malicious patches"""
 
-    def __init__(self, model: efficientdet_keras.EfficientDetModel, patch_loss_multiplier=1e-2, iou=.5,
-                 min_patch_height=1, visualize_freq=200):
+    def __init__(self, model: efficientdet_keras.EfficientDetModel, patch_loss_multiplier=1e-2,
+                 min_patch_height=1, config_override=None, visualize_freq=200):
         super().__init__(name='Attacker_Graph')
         self.model = model
         self.config = self.model.config
-
-        iou = iou
-        self.model.config.override({'nms_configs': {'iou_thresh': iou, 'score_thresh': .5}, 'image_size': 300})
+        if config_override:
+            self.model.config.override(config_override)
         patch_img = (np.random.rand(512, 512, 3) * 255.).astype('uint8').astype(float)
         patch_img -= self.config.mean_rgb
         patch_img /= self.config.stddev_rgb
@@ -56,6 +55,7 @@ class PatchAttacker(tf.keras.Model):
         self.tb = None
 
         patcher_scale = self._patcher.scale
+        iou = self.config.nms_configs.iou_thresh
         self._metric = metrics.AttackSuccessRate(min_patch_height / patcher_scale, iou_thresh=iou)
         self._patch_loss_multiplier = tf.constant(patch_loss_multiplier, tf.float32)
 
@@ -365,11 +365,12 @@ def main(download_model=False):
             tf.config.experimental.set_memory_growth(gpu, True)
 
     victim_model = get_victim_model(download_model)
-    model = PatchAttacker(victim_model)
+    config_override = {'nms_configs': {'iou_thresh': .5, 'score_thresh': .5}}
+    model = PatchAttacker(victim_model, patch_loss_multiplier=0., config_override=config_override)
     model.compile(optimizer='adam', run_eagerly=False)
 
     datasets: dict = train_data_generator.partition(model.config, 'downloaded_images', 'labels',
-                                                    batch_size=2, shuffle=True)
+                                                    batch_size=1, shuffle=True)
 
     train_ds = datasets['train']['dataset']
     val_ds = datasets['val']['dataset']
@@ -381,10 +382,10 @@ def main(download_model=False):
     save_dir = ensure_empty_dir('save_dir')
     save_file = 'patch_{epoch:02d}.png'
     history = model.fit(train_ds,
-                        # validation_data=val_ds,
+                        validation_data=val_ds,
                         epochs=10,
-                        steps_per_epoch=2, #  train_len,
-                        # validation_steps=val_len,
+                        steps_per_epoch= train_len,
+                        validation_steps=val_len,
                         callbacks=[tb_callback,
                                    tf.keras.callbacks.ModelCheckpoint(os.path.join(save_dir, save_file),
                                                                       monitor='val_loss',

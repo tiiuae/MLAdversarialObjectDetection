@@ -78,7 +78,7 @@ def main():
     burj2_tf -= 127.
     burj2_tf /= 127.
 
-    res = HistogramMatcher().call((burj1_tf, burj2_tf))
+    res, _ = HistogramMatcher().call((burj1_tf, burj2_tf))
     res = Image.fromarray((res.numpy() * 127. + 127.).astype('uint8'))
 
     burj1.show('source')
@@ -90,7 +90,7 @@ def main():
     res1 -= 127.
     res1 /= 127.
 
-    res1 = HistogramMatcher().call((res1, burj1_tf))
+    res1, _ = HistogramMatcher().call((res1, burj1_tf))
     res1 = Image.fromarray((res1.numpy() * 127. + 127.).astype('uint8'))
     res1.show('restored')
 
