@@ -14,17 +14,21 @@ class HistogramMatcher(tf.keras.layers.Layer):
 
     def call(self, inputs, **kwargs):
         src, tgt = inputs
-        h, w, _ = src.shape
+        h, w, _ = tf.unstack(tf.shape(src))
         floating_colorspace = tf.clip_by_value(tf.range(-1., 1.01, delta=1. / 127.), -1., 1.)
         res = []
-        for i in range(3):
-            source, target = src[:, :, i:i + 1], tgt[:, :, i:i + 1]
-            cdfsrc = self.equalize_histogram(source)
-            cdftgt = self.equalize_histogram(target)
-            pxmap = self.interpolate(cdftgt, floating_colorspace, cdfsrc)
-            pxmap = self.interpolate(floating_colorspace, pxmap, tf.reshape(source, (h * w)))
-            res.append(tf.reshape(pxmap, (h, w)))
-        return tf.stack(res, axis=2)
+        with tf.GradientTape() as tape:
+            tape.watch(src)
+            for i in range(3):
+                source, target = src[:, :, i:i + 1], tgt[:, :, i:i + 1]
+                cdfsrc = self.equalize_histogram(source)
+                cdftgt = self.equalize_histogram(target)
+                pxmap = self.interpolate(cdftgt, floating_colorspace, cdfsrc)
+                pxmap = self.interpolate(floating_colorspace, pxmap, tf.reshape(source, (h * w,)))
+                res.append(tf.reshape(pxmap, (h, w)))
+            res = tf.stack(res, axis=2)
+        grad = tape.gradient(res, src)
+        return res, grad
 
     @staticmethod
     def equalize_histogram(image):
@@ -43,8 +47,9 @@ class HistogramMatcher(tf.keras.layers.Layer):
         with tf.name_scope('interpolate'):
             with tf.name_scope('neighbors'):
                 delVals = dx_T - x[:, tf.newaxis]
-                ind_1 = tf.argmin(tf.abs(delVals), axis=1)
-                ind_0 = tf.where(tf.greater(ind_1, 0), ind_1 - 1, 0)
+                ind_1 = tf.argmax(tf.sign(delVals), axis=1)
+                ind_0 = ind_1 - 1
+                ind_0 = tf.clip_by_value(ind_0, 0, 255)
 
             with tf.name_scope('calculation'):
                 values = tf.where(tf.less_equal(x, dx_T[0]),
@@ -55,7 +60,8 @@ class HistogramMatcher(tf.keras.layers.Layer):
                                       tf.gather(dy_T, ind_0) + (tf.gather(dy_T, ind_1) - tf.gather(dy_T, ind_0)) *
                                       (x - tf.gather(dx_T, ind_0)) / (tf.gather(dx_T, ind_1) - tf.gather(dx_T, ind_0)))
                                   )
-
+                tf.debugging.assert_equal(tf.reduce_any(tf.logical_or(tf.math.is_inf(values),
+                                                                      tf.math.is_nan(values))), False)
         return values
 
 

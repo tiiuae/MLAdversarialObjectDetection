@@ -14,9 +14,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import tensorflow as tf
 
+import custom_callbacks
 import histogram_matcher
 import metrics
-import custom_callbacks
 import train_data_generator
 import util
 from tf2 import postprocess, efficientdet_keras, infer_lib
@@ -44,11 +44,9 @@ class PatchAttacker(tf.keras.Model):
                                   constraint=lambda x: tf.clip_by_value(x, -1., 1.))
         self.visualize_freq = tf.constant(visualize_freq, tf.int64)
         self._denorm = Denormalizer(self.config, name='Denormalizer')
-        self._norm = Normalizer(self.config, name='Normalizer')
         self._histmatch = histogram_matcher.HistogramMatcher(name='Hist_Matcher')
-        self._patcher = Patcher(self._patch, self._denorm, self._norm, self._histmatch,
-                                min_patch_height=min_patch_height, name='Patcher')
-        self._grad_processor = GradientProcessor(self._patch, name='Gradient_Processor')
+        self._patcher = Patcher(self._patch, self._histmatch, min_patch_height=min_patch_height, name='Patcher')
+        self._grad_processor = GradientProcessor(self._patch, self._histmatch, name='Gradient_Processor')
         self._images = None
         self._labels = None
         self.cur_train_step = tf.Variable(0, trainable=False, dtype=tf.int64)
@@ -121,7 +119,7 @@ class PatchAttacker(tf.keras.Model):
         else:
             self._images.assign(images)
 
-        patch_boxes, transform_decisions = self._patcher([boxes, self._images])
+        patch_boxes, transform_decisions, patch_grads = self._patcher([boxes, self._images])
 
         with tf.GradientTape(persistent=True) as tape:
             boxes_pred, scores, classes = self.second_pass(self._images)
@@ -140,7 +138,7 @@ class PatchAttacker(tf.keras.Model):
 
         if training:
             gradients = tape.gradient(loss, self._images)
-            gradients = self._grad_processor([gradients, patch_boxes, transform_decisions])
+            gradients = self._grad_processor([gradients, patch_boxes, transform_decisions, patch_grads])
             gradients = gradients + tape.gradient(tv_loss, self._patch)
             return gradients
 
@@ -164,7 +162,7 @@ class PatchAttacker(tf.keras.Model):
             if training:
                 patch = self._denorm(self._patch)
                 tf.summary.image('Current patch', patch[tf.newaxis], step=self.cur_step)
-            tf.summary.image('Sample', images, step=self.cur_step)
+            tf.summary.image('Sample', images, step=self.cur_step, max_outputs=tf.shape(self._images)[0])
 
     def tv_loss(self):
         """TV loss"""
@@ -209,21 +207,10 @@ class Denormalizer(tf.keras.layers.Layer):
         return tf.cast(inputs * self.config.stddev_rgb + self.config.mean_rgb, tf.uint8)
 
 
-class Normalizer(tf.keras.layers.Layer):
-    def __init__(self, config, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.config = config
-
-    def call(self, inputs):
-        return (tf.cast(inputs, tf.float32) - self.config.mean_rgb) / self.config.stddev_rgb
-
-
 class GradientProcessor(tf.keras.layers.Layer):
-    def __init__(self, patch, denormalizer, normalizer, histmatcher, *args, **kwargs):
+    def __init__(self, patch, histmatcher, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._patch = patch
-        self._denorm = denormalizer
-        self._norm = normalizer
         self._matcher = histmatcher
         self._batch_counter = tf.Variable(tf.constant(0), trainable=False)
         self._patch_counter = tf.Variable(tf.constant(0), trainable=False)
@@ -245,11 +232,6 @@ class GradientProcessor(tf.keras.layers.Layer):
         # gradients = tf.cond(transform_decisions[0], lambda: tf.image.rot90(gradients, k=3), lambda: gradients)
         gradients = tf.image.resize(gradients, self._patch.shape[:-1])
 
-        gradients = self._denorm(gradients)
-        patch = self._denorm(self._patch)
-        gradients = self._matcher((gradients, patch))
-        gradients = self._norm(gradients)
-
         self._agg.assign_add(gradients)
         self._patch_counter.assign_add(tf.constant(1))
         return [self._patch_counter]
@@ -263,21 +245,19 @@ class GradientProcessor(tf.keras.layers.Layer):
         return [self._batch_counter]
 
     def call(self, inputs, *args, **kwargs):
-        self._gradients, self._patch_boxes, self._transform_decisions = inputs
+        self._gradients, self._patch_boxes, self._transform_decisions, patch_grads = inputs
         self._batch_counter.assign(tf.constant(0))
-        self._agg.assign(tf.zeros(self._patch_shape, dtype=tf.float32))
+        self._agg.assign(tf.zeros_like(self._patch, dtype=tf.float32))
         tf.while_loop(lambda _: tf.less(self._batch_counter, tf.cast(self._patch_boxes.nrows(), tf.int32)),
                       self.batch_loop, [self._batch_counter])
-        return self._agg
+        return self._agg * patch_grads
 
 
 class Patcher(tf.keras.layers.Layer):
-    def __init__(self, patch: tf.Variable, denormalizer, normalizer, histmatcher, *args, aspect=1., origin=(.5, .5),
+    def __init__(self, patch: tf.Variable, histmatcher, *args, aspect=1., origin=(.5, .5),
                  scale=.5, min_patch_height=60, **kwargs):
         super().__init__(*args, **kwargs)
         self._patch = patch
-        self._denorm = denormalizer
-        self._norm = normalizer
         self._matcher = histmatcher
         self._batch_counter = tf.Variable(tf.constant(0), trainable=False)
         self._patch_counter = tf.Variable(tf.constant(0), trainable=False)
@@ -285,6 +265,7 @@ class Patcher(tf.keras.layers.Layer):
         self.aspect = aspect
         self.origin = origin
         self.scale = scale
+        self._grads = tf.Variable(tf.zeros(self._patch.shape, dtype=tf.float32), trainable=False)
         self.min_patch_height = min_patch_height
 
     def add_patches_to_image(self, boxes):
@@ -295,24 +276,25 @@ class Patcher(tf.keras.layers.Layer):
         transform_decisions = tf.cast(tf.random.uniform(shape=(tf.shape(patch_boxes)[0], 3), minval=0, maxval=2,
                                                         dtype=tf.int32), tf.bool)
 
-        image = self._denorm(self._images[self._batch_counter])
-        patch = self._denorm(self._patch)
-        patch = self._matcher((patch, image))
-        patch = self._norm(patch)
-
-        loop_fn = functools.partial(self.add_patch_to_image, patch, patch_boxes, transform_decisions)
-        tf.while_loop(lambda _: tf.less(self._patch_counter, tf.shape(patch_boxes)[0]), loop_fn, [self._patch_counter])
+        im_orig = self._images[self._batch_counter]
+        patch, hist_grad = self._matcher((self._patch, im_orig))
+        loop_fn = functools.partial(self.add_patch_to_image, patch_boxes, patch, hist_grad, transform_decisions)
+        tf.while_loop(lambda i: tf.less(self._patch_counter, tf.shape(patch_boxes)[0]), loop_fn, [self._patch_counter])
         self._batch_counter.assign_add(tf.constant(1))
         return tf.RaggedTensor.from_tensor(tf.concat([patch_boxes, tf.cast(transform_decisions, tf.float32)], axis=1),
                                            row_splits_dtype=tf.int32)
 
-    def add_patch_to_image(self, patch, patch_boxes, transform_decisions, _):
+    # @tf.function
+    def add_patch_to_image(self, patch_boxes, patch, hist_grad, transform_decisions, i):
         ymin_patch, xmin_patch, patch_h, patch_w = tf.unstack(tf.cast(patch_boxes[self._patch_counter], tf.int32))
-        im = tf.image.resize(patch, tf.stack([patch_h, patch_w]))
-        # im = tf.cond(transform_decisions[self._patch_counter, 0], lambda: tf.image.rot90(im), lambda: im)
-        # im = tf.cond(transform_decisions[self._patch_counter, 1], lambda: tf.image.rot90(im), lambda: im)
-        # im = tf.cond(transform_decisions[self._patch_counter, 2], lambda: tf.image.rot90(im), lambda: im)
+        with tf.GradientTape() as tape:
+            tape.watch(patch)
+            im = tf.image.resize(patch, tf.stack([patch_h, patch_w]))
+            # im = tf.cond(transform_decisions[self._patch_counter, 0], lambda: tf.image.rot90(im), lambda: im)
+            # im = tf.cond(transform_decisions[self._patch_counter, 1], lambda: tf.image.rot90(im), lambda: im)
+            # im = tf.cond(transform_decisions[self._patch_counter, 2], lambda: tf.image.rot90(im), lambda: im)
 
+        self._grads.assign_add(tape.gradient(im, patch) * hist_grad)
         ymax = ymin_patch + patch_h
         xmax = xmin_patch + patch_w
         self._images[self._batch_counter, ymin_patch:ymax, xmin_patch:xmax].assign(im)
@@ -345,11 +327,12 @@ class Patcher(tf.keras.layers.Layer):
     def call(self, inputs, *args, **kwargs):
         batch_boxes, self._images = inputs
         self._batch_counter.assign(tf.constant(0))
+        self._grads.assign(tf.zeros(self._patch.shape, dtype=tf.float32))
         result = tf.map_fn(self.add_patches_to_image, batch_boxes,
                            fn_output_signature=tf.RaggedTensorSpec((None, 7), tf.float32, 1, tf.int32))
         patch_boxes = result[:, :, :4]
         transform_decisions = tf.cast(result[:, :, 4:], tf.bool)
-        return patch_boxes, transform_decisions
+        return patch_boxes, transform_decisions, self._grads
 
 
 def get_victim_model(download_model=False):
