@@ -17,18 +17,14 @@ class HistogramMatcher(tf.keras.layers.Layer):
         h, w, _ = tf.unstack(tf.shape(src))
         floating_colorspace = tf.clip_by_value(tf.range(-1., 1.01, delta=1. / 127.), -1., 1.)
         res = []
-        with tf.GradientTape() as tape:
-            tape.watch(src)
-            for i in range(3):
-                source, target = src[:, :, i:i + 1], tgt[:, :, i:i + 1]
-                cdfsrc = self.equalize_histogram(source)
-                cdftgt = self.equalize_histogram(target)
-                pxmap = self.interpolate(cdftgt, floating_colorspace, cdfsrc)
-                pxmap = self.interpolate(floating_colorspace, pxmap, tf.reshape(source, (h * w,)))
-                res.append(tf.reshape(pxmap, (h, w)))
-            res = tf.stack(res, axis=2)
-        grad = tape.gradient(res, src)
-        return res, grad
+        for i in range(3):
+            source, target = src[:, :, i:i + 1], tgt[:, :, i:i + 1]
+            cdfsrc = self.equalize_histogram(source)
+            cdftgt = self.equalize_histogram(target)
+            pxmap = self.interpolate(cdftgt, floating_colorspace, cdfsrc)
+            pxmap = self.interpolate(floating_colorspace, pxmap, tf.reshape(source, (h * w,)))
+            res.append(tf.reshape(pxmap, (h, w)))
+        return tf.stack(res, axis=2)
 
     @staticmethod
     def equalize_histogram(image):
@@ -78,7 +74,7 @@ def main():
     burj2_tf -= 127.
     burj2_tf /= 127.
 
-    res, _ = HistogramMatcher().call((burj1_tf, burj2_tf))
+    res = HistogramMatcher().call((burj1_tf, burj2_tf))
     res = Image.fromarray((res.numpy() * 127. + 127.).astype('uint8'))
 
     burj1.show('source')
@@ -90,7 +86,7 @@ def main():
     res1 -= 127.
     res1 /= 127.
 
-    res1, _ = HistogramMatcher().call((res1, burj1_tf))
+    res1 = HistogramMatcher().call((res1, burj1_tf))
     res1 = Image.fromarray((res1.numpy() * 127. + 127.).astype('uint8'))
     res1.show('restored')
 
