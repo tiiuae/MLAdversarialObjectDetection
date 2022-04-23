@@ -11,8 +11,6 @@ import tensorflow as tf
 class HistogramMatcher(tf.keras.layers.Layer):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self._min_val = None
-        self._max_val = None
 
     def _rescale_0_1(self, img):
         return (img + 1.) * 127. / 255.
@@ -20,28 +18,24 @@ class HistogramMatcher(tf.keras.layers.Layer):
     def _rescale_back(self, img):
         return (img * 255. / 127.) - 1.
 
-    def reset_state(self):
-        self._min_val = self._max_val = None
-
     def call(self, inputs, **kwargs):
-        self.reset_state()
         src, tgt = inputs
         src = self._rescale_0_1(src)
         tgt = self._rescale_0_1(tgt)
-        src = tf.image.rgb_to_hsv(src)
-        tgt = tf.image.rgb_to_hsv(tgt)
+        src = tf.image.rgb_to_yuv(src)
+        tgt = tf.image.rgb_to_yuv(tgt)
         h, w, _ = tf.unstack(tf.shape(src))
         floating_space = tf.clip_by_value(tf.range(0, 1.00001, delta=1. / 255.), 0., 1.)
-        res = [src[:, :, 0]]
-        for i in range(1, 3):
-            source, target = src[:, :, i:i+1], tgt[:, :, i:i+1]
-            cdfsrc = self.equalize_histogram(source)
-            cdftgt = self.equalize_histogram(target)
-            pxmap = self.interpolate(cdftgt, floating_space, cdfsrc)
-            pxmap = self.interpolate(floating_space, pxmap, tf.reshape(source, (h * w,)))
-            pxmap = tf.reshape(pxmap, (h, w))
-            res.append(pxmap)
-        return self._rescale_back(tf.image.hsv_to_rgb(tf.stack(res, axis=2)))
+
+        source, target = src[:, :, 0], tgt[:, :, 0]
+        cdfsrc = self.equalize_histogram(source)
+        cdftgt = self.equalize_histogram(target)
+        pxmap = self.interpolate(cdftgt, floating_space, cdfsrc)
+        pxmap = self.interpolate(floating_space, pxmap, tf.reshape(source, (h * w,)))
+        pxmap = tf.reshape(pxmap, (h, w))
+        res = [pxmap, src[..., 1], src[..., 2]]
+        res = self._rescale_back(tf.image.yuv_to_rgb(tf.stack(res, axis=2)))
+        return res
 
     @staticmethod
     def equalize_histogram(image):
