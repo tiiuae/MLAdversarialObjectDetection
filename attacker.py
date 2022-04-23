@@ -304,8 +304,8 @@ def main(download_model=False):
 
     victim_model = get_victim_model(download_model)
     config_override = {'nms_configs': {'iou_thresh': .5, 'score_thresh': .5}}
-    model = PatchAttacker(victim_model, patch_loss_multiplier=0., config_override=config_override)
-    model.compile(optimizer=tf.keras.optimizers.SGD(learning_rate=1e-5), run_eagerly=False)
+    model = PatchAttacker(victim_model, patch_loss_multiplier=0., config_override=config_override, visualize_freq=1)
+    model.compile(optimizer=tf.keras.optimizers.SGD(learning_rate=1e-3), run_eagerly=True)
 
     datasets: dict = train_data_generator.partition(model.config, 'downloaded_images', 'labels',
                                                     batch_size=1, shuffle=True)
@@ -322,8 +322,8 @@ def main(download_model=False):
     history = model.fit(train_ds,
                         validation_data=val_ds,
                         epochs=10,
-                        steps_per_epoch= train_len,
-                        validation_steps=val_len,
+                        steps_per_epoch=20,#train_len,
+                        validation_steps=20,#val_len,
                         callbacks=[tb_callback,
                                    tf.keras.callbacks.ModelCheckpoint(os.path.join(save_dir, save_file),
                                                                       monitor='val_loss',

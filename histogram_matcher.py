@@ -14,17 +14,20 @@ class HistogramMatcher(tf.keras.layers.Layer):
 
     def call(self, inputs, **kwargs):
         src, tgt = inputs
+        src = tf.image.rgb_to_hsv(src)
+        tgt = tf.image.rgb_to_hsv(tgt)
         h, w, _ = tf.unstack(tf.shape(src))
-        floating_colorspace = tf.clip_by_value(tf.range(-1., 1.01, delta=1. / 127.), -1., 1.)
-        res = []
-        for i in range(3):
-            source, target = src[:, :, i:i + 1], tgt[:, :, i:i + 1]
-            cdfsrc = self.equalize_histogram(source)
-            cdftgt = self.equalize_histogram(target)
-            pxmap = self.interpolate(cdftgt, floating_colorspace, cdfsrc)
-            pxmap = self.interpolate(floating_colorspace, pxmap, tf.reshape(source, (h * w,)))
-            res.append(tf.reshape(pxmap, (h, w)))
-        return tf.stack(res, axis=2)
+        floating_space = tf.clip_by_value(tf.range(-1., 1.01, delta=1. / 127.), -1., 1.)
+        src_h, src_s, src_v = tf.unstack(src, axis=2)
+
+        source, target = src_v, tgt[:, :, -1:]
+        cdfsrc = self.equalize_histogram(source)
+        cdftgt = self.equalize_histogram(target)
+        pxmap = self.interpolate(cdftgt, floating_space, cdfsrc)
+        pxmap = self.interpolate(floating_space, pxmap, tf.reshape(source, (h * w,)))
+        pxmap = tf.reshape(pxmap, (h, w))
+
+        return tf.image.hsv_to_rgb(tf.stack([src_h, src_s, pxmap], axis=2))
 
     @staticmethod
     def equalize_histogram(image):
@@ -34,7 +37,7 @@ class HistogramMatcher(tf.keras.layers.Layer):
         cdf_min = tf.reduce_min(cdf)
 
         img_shape = tf.shape(image)
-        pix_cnt = img_shape[-3] * img_shape[-2]
+        pix_cnt = img_shape[0] * img_shape[1]
         cdfimg = tf.cast(cdf - cdf_min, tf.float32) * 2. / tf.cast(pix_cnt - 1, tf.float32) - 1.
         return cdfimg
 
