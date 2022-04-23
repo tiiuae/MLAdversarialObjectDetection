@@ -8,7 +8,6 @@ Purpose: attack the person detector
 import functools
 import logging
 import os
-import shutil
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -61,42 +60,44 @@ class PatchAttacker(tf.keras.Model):
         return self._denorm(self._patch).numpy()
 
     def first_pass(self, images):
-        boxes, scores, classes, _ = self.model(images, pre_mode=None)
-        person_indices = tf.equal(classes, tf.constant(1.))
-        boxes = tf.ragged.boolean_mask(boxes, person_indices)
-        boxes_h = boxes[:, :, 2] - boxes[:, :, 0]
-        boxes_w = boxes[:, :, 3] - boxes[:, :, 1]
-        boxes_area = boxes_h * boxes_w
-        valid_boxes = tf.greater(boxes_area, tf.constant(1000.))
-        boxes = tf.ragged.boolean_mask(boxes, valid_boxes)
+        with tf.name_scope('first_pass'):
+            boxes, scores, classes, _ = self.model(images, pre_mode=None)
+            person_indices = tf.equal(classes, tf.constant(1.))
+            boxes = tf.ragged.boolean_mask(boxes, person_indices)
+            boxes_h = boxes[:, :, 2] - boxes[:, :, 0]
+            boxes_w = boxes[:, :, 3] - boxes[:, :, 1]
+            boxes_area = boxes_h * boxes_w
+            valid_boxes = tf.greater(boxes_area, tf.constant(1000.))
+            boxes = tf.ragged.boolean_mask(boxes, valid_boxes)
         return boxes
 
     def second_pass(self, image):
-        cls_outputs, box_outputs = self.model(image, pre_mode=None, post_mode=None)
-        cls_outputs = postprocess.to_list(cls_outputs)
-        box_outputs = postprocess.to_list(box_outputs)
-        boxes, scores, classes = postprocess.pre_nms(self.config.as_dict(), cls_outputs, box_outputs)
-        person_indices = tf.equal(classes, tf.constant(0))  # taking postprocess.CLASS_OFFSET into account
-        scores = tf.ragged.boolean_mask(scores, person_indices)
+        with tf.name_scope('attack_pass'):
+            cls_outputs, box_outputs = self.model(image, pre_mode=None, post_mode=None)
+            cls_outputs = postprocess.to_list(cls_outputs)
+            box_outputs = postprocess.to_list(box_outputs)
+            boxes, scores, classes = postprocess.pre_nms(self.config.as_dict(), cls_outputs, box_outputs)
+            person_indices = tf.equal(classes, tf.constant(0))  # taking postprocess.CLASS_OFFSET into account
+            scores = tf.ragged.boolean_mask(scores, person_indices)
 
-        boxes = tf.ragged.boolean_mask(boxes, person_indices)
-        classes = tf.ragged.boolean_mask(classes, person_indices)
+            boxes = tf.ragged.boolean_mask(boxes, person_indices)
+            classes = tf.ragged.boolean_mask(classes, person_indices)
         return boxes, scores, classes
 
     def _postprocessing(self, boxes, scores, classes):
+        with tf.name_scope('post_processing'):
+            def single_batch_fn(element):
+                return postprocess.nms(self.config, boxes[element], scores[element], classes[element], True)
 
-        def single_batch_fn(element):
-            return postprocess.nms(self.config, boxes[element], scores[element], classes[element], True)
-
-        nms_boxes, nms_scores, nms_classes, nms_valid_len = tf.map_fn(single_batch_fn, tf.range(boxes.nrows()),
-                                                                      fn_output_signature=(
-                                                                      tf.TensorSpec((None, 4), dtype=tf.float32),
-                                                                      tf.TensorSpec((None,), dtype=tf.float32),
-                                                                      tf.TensorSpec((None,), dtype=tf.float32),
-                                                                      tf.TensorSpec((), dtype=tf.int32)))
-        nms_boxes = postprocess.clip_boxes(nms_boxes, self.config.image_size)
-        nms_boxes = tf.RaggedTensor.from_tensor(nms_boxes, lengths=nms_valid_len)
-        nms_scores = tf.RaggedTensor.from_tensor(nms_scores, lengths=nms_valid_len)
+            nms_boxes, nms_scores, nms_classes, nms_valid_len = tf.map_fn(single_batch_fn, tf.range(boxes.nrows()),
+                                                                          fn_output_signature=(
+                                                                          tf.TensorSpec((None, 4), dtype=tf.float32),
+                                                                          tf.TensorSpec((None,), dtype=tf.float32),
+                                                                          tf.TensorSpec((None,), dtype=tf.float32),
+                                                                          tf.TensorSpec((), dtype=tf.int32)))
+            nms_boxes = postprocess.clip_boxes(nms_boxes, self.config.image_size)
+            nms_boxes = tf.RaggedTensor.from_tensor(nms_boxes, lengths=nms_valid_len)
+            nms_scores = tf.RaggedTensor.from_tensor(nms_scores, lengths=nms_valid_len)
         return nms_boxes, nms_scores
 
     def call(self, inputs, *, training=True):
@@ -190,7 +191,7 @@ class PatchAttacker(tf.keras.Model):
 
 class Denormalizer(tf.keras.layers.Layer):
     def __init__(self, config, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+        super().__init__(*args, trainable=False, **kwargs)
         self.config = config
 
     def call(self, inputs):
@@ -200,7 +201,7 @@ class Denormalizer(tf.keras.layers.Layer):
 class Patcher(tf.keras.layers.Layer):
     def __init__(self, patch: tf.Variable, histmatcher, *args, aspect=1., origin=(.5, .5),
                  scale=.5, min_patch_height=60, **kwargs):
-        super().__init__(*args, **kwargs)
+        super().__init__(*args, trainable=False, **kwargs)
         self._patch = patch
         self._matcher = histmatcher
         self._batch_counter = tf.Variable(tf.constant(0), trainable=False)
@@ -212,7 +213,6 @@ class Patcher(tf.keras.layers.Layer):
         self.min_patch_height = min_patch_height
 
     def add_patches_to_image(self, image):
-        self._patch_counter.assign(tf.constant(0))
         boxes = self._boxes[self._batch_counter]
         patch_boxes = tf.vectorized_map(functools.partial(self.create, image), boxes)
         patch_boxes = tf.gather_nd(patch_boxes, tf.where(tf.greater(patch_boxes[:, 2],
@@ -220,6 +220,7 @@ class Patcher(tf.keras.layers.Layer):
         # transform_decisions = tf.cast(tf.random.uniform(shape=(tf.shape(patch_boxes)[0], 3), minval=0, maxval=2,
         #                                                 dtype=tf.int32), tf.bool)
 
+        self._patch_counter.assign(tf.constant(0))
         loop_fn = functools.partial(self.add_patch_to_image, patch_boxes)
         image, _ = tf.while_loop(lambda image, i: tf.less(self._patch_counter, tf.shape(patch_boxes)[0]), loop_fn,
                                  [image, self._patch_counter])
@@ -284,20 +285,11 @@ def get_victim_model(download_model=False):
     return driver.model
 
 
-def ensure_empty_dir(dirname):
-    try:
-        os.makedirs(dirname)
-    except FileExistsError:
-        shutil.rmtree(dirname, ignore_errors=True)
-        os.makedirs(dirname)
-    return dirname
-
-
 def main(download_model=False):
     # noinspection PyShadowingNames
     logger = util.get_logger(__name__, logging.DEBUG)
 
-    log_dir = ensure_empty_dir('log_dir')
+    log_dir = util.ensure_empty_dir('log_dir')
     gpus = tf.config.list_physical_devices('GPU')
     if gpus:
         for gpu in gpus:
@@ -306,7 +298,7 @@ def main(download_model=False):
     victim_model = get_victim_model(download_model)
     config_override = {'nms_configs': {'iou_thresh': .5, 'score_thresh': .5}}
     model = PatchAttacker(victim_model, patch_loss_multiplier=0., config_override=config_override, visualize_freq=1)
-    model.compile(optimizer=tf.keras.optimizers.SGD(learning_rate=1e-3), run_eagerly=True)
+    model.compile(optimizer=tf.keras.optimizers.SGD(learning_rate=1e-3), run_eagerly=False)
 
     datasets: dict = train_data_generator.partition(model.config, 'downloaded_images', 'labels',
                                                     batch_size=1, shuffle=True)
@@ -318,11 +310,11 @@ def main(download_model=False):
     tb_callback = custom_callbacks.TensorboardCallback(log_dir, write_graph=True, write_steps_per_second=True)
     model.tb = tb_callback
 
-    save_dir = ensure_empty_dir('save_dir')
+    save_dir = util.ensure_empty_dir('save_dir')
     save_file = 'patch_{epoch:02d}.png'
     history = model.fit(train_ds,
                         validation_data=val_ds,
-                        epochs=10,
+                        epochs=100,
                         steps_per_epoch=20,#train_len,
                         validation_steps=20,#val_len,
                         callbacks=[tb_callback,

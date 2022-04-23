@@ -7,9 +7,20 @@ Purpose: utiltity functions and classes
 """
 import logging
 import os
+import shutil
 import tarfile
 
 import requests
+import tensorflow as tf
+
+
+@tf.function
+def sign(tensor):
+    """replacement of tf.sign due to bug with inconsistent behaviour on eager and non-eager execution"""
+    with tf.name_scope('sign'):
+        gt = tf.where(tf.greater(tensor, 0.), 1., 0.)
+        lt = tf.where(tf.less(tensor, 0.), -1., 0.)
+    return gt + lt
 
 
 def convert_to_hw_format(bbox):
@@ -48,3 +59,12 @@ def download(m):
             f.write(r.content)
         with tarfile.open(fname) as f:
             f.extractall()
+
+
+def ensure_empty_dir(dirname):
+    try:
+        os.makedirs(dirname)
+    except FileExistsError:
+        shutil.rmtree(dirname, ignore_errors=True)
+        os.makedirs(dirname)
+    return dirname
