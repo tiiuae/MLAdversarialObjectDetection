@@ -34,7 +34,8 @@ class HistogramMatcher(tf.keras.layers.Layer):
         pxmap = self.interpolate(floating_space, pxmap, tf.reshape(source, (h * w,)))
         pxmap = tf.reshape(pxmap, (h, w))
         res = [pxmap, src[..., 1], src[..., 2]]
-        res = self._rescale_back(tf.image.yuv_to_rgb(tf.stack(res, axis=2)))
+        res = tf.clip_by_value(tf.image.yuv_to_rgb(tf.stack(res, axis=2)), 0., 1.)
+        res = self._rescale_back(res)
         return res
 
     @staticmethod

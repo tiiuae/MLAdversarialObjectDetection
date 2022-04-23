@@ -220,20 +220,21 @@ class Patcher(tf.keras.layers.Layer):
         # transform_decisions = tf.cast(tf.random.uniform(shape=(tf.shape(patch_boxes)[0], 3), minval=0, maxval=2,
         #                                                 dtype=tf.int32), tf.bool)
 
-        patch = self._matcher((self._patch, image))
-        loop_fn = functools.partial(self.add_patch_to_image, patch_boxes, patch)
+        loop_fn = functools.partial(self.add_patch_to_image, patch_boxes)
         image, _ = tf.while_loop(lambda image, i: tf.less(self._patch_counter, tf.shape(patch_boxes)[0]), loop_fn,
                                  [image, self._patch_counter])
         self._batch_counter.assign_add(tf.constant(1))
         return image
 
     # @tf.function
-    def add_patch_to_image(self, patch_boxes, patch, image, i):
+    def add_patch_to_image(self, patch_boxes, image, i):
         ymin_patch, xmin_patch, patch_h, patch_w = tf.unstack(tf.cast(patch_boxes[self._patch_counter], tf.int32))
         ymax = ymin_patch + patch_h
         xmax = xmin_patch + patch_w
         idx = tf.stack(tf.meshgrid(tf.range(ymin_patch, ymax), tf.range(xmin_patch, xmax), indexing='ij'), axis=-1)
 
+        patch_bg = image[ymin_patch:ymax, xmin_patch:xmax]
+        patch = self._matcher((self._patch, patch_bg))
         im = tf.image.resize(patch, tf.stack([patch_h, patch_w]))
         # im = tf.cond(transform_decisions[self._patch_counter, 0], lambda: tf.image.rot90(im), lambda: im)
         # im = tf.cond(transform_decisions[self._patch_counter, 1], lambda: tf.image.rot90(im), lambda: im)
