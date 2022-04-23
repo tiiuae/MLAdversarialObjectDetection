@@ -11,13 +11,27 @@ import tensorflow as tf
 class HistogramMatcher(tf.keras.layers.Layer):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self._min_val = None
+        self._max_val = None
+
+    def _rescale_0_1(self, img):
+        return (img + 1.) * 127. / 255.
+
+    def _rescale_back(self, img):
+        return (img * 255. / 127.) - 1.
+
+    def reset_state(self):
+        self._min_val = self._max_val = None
 
     def call(self, inputs, **kwargs):
+        self.reset_state()
         src, tgt = inputs
+        src = self._rescale_0_1(src)
+        tgt = self._rescale_0_1(tgt)
         src = tf.image.rgb_to_hsv(src)
         tgt = tf.image.rgb_to_hsv(tgt)
         h, w, _ = tf.unstack(tf.shape(src))
-        floating_space = tf.clip_by_value(tf.range(-1., 1.01, delta=1. / 127.), -1., 1.)
+        floating_space = tf.clip_by_value(tf.range(0, 1.00001, delta=1. / 255.), 0., 1.)
         src_h, src_s, src_v = tf.unstack(src, axis=2)
 
         source, target = src_v, tgt[:, :, -1:]
@@ -26,19 +40,18 @@ class HistogramMatcher(tf.keras.layers.Layer):
         pxmap = self.interpolate(cdftgt, floating_space, cdfsrc)
         pxmap = self.interpolate(floating_space, pxmap, tf.reshape(source, (h * w,)))
         pxmap = tf.reshape(pxmap, (h, w))
-
-        return tf.image.hsv_to_rgb(tf.stack([src_h, src_s, pxmap], axis=2))
+        return self._rescale_back(tf.image.hsv_to_rgb(tf.stack([src_h, src_s, pxmap], axis=2)))
 
     @staticmethod
     def equalize_histogram(image):
-        values_range = tf.constant([-1., 1.], dtype=tf.float32)
+        values_range = tf.constant([0., 1.], dtype=tf.float32)
         histogram = tf.histogram_fixed_width(image, values_range, 256)
         cdf = tf.cumsum(histogram)
         cdf_min = tf.reduce_min(cdf)
 
         img_shape = tf.shape(image)
         pix_cnt = img_shape[0] * img_shape[1]
-        cdfimg = tf.cast(cdf - cdf_min, tf.float32) * 2. / tf.cast(pix_cnt - 1, tf.float32) - 1.
+        cdfimg = tf.cast(cdf - cdf_min, tf.float32) / tf.cast(pix_cnt - 1, tf.float32)
         return cdfimg
 
     @staticmethod
