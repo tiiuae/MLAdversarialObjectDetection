@@ -9,9 +9,9 @@ import functools
 import logging
 import os
 
-import matplotlib.pyplot as plt
 import numpy as np
 import tensorflow as tf
+from PIL import Image
 
 import custom_callbacks
 import histogram_matcher
@@ -27,14 +27,17 @@ MODEL = 'efficientdet-lite4'
 class PatchAttacker(tf.keras.Model):
     """attack with malicious patches"""
 
-    def __init__(self, model: efficientdet_keras.EfficientDetModel, patch_loss_multiplier=1e-2,
+    def __init__(self, model: efficientdet_keras.EfficientDetModel, starting_patch=None, patch_loss_multiplier=1e-2,
                  min_patch_height=1, config_override=None, visualize_freq=200):
         super().__init__(name='Attacker_Graph')
         self.model = model
         self.config = self.model.config
         if config_override:
             self.model.config.override(config_override)
-        patch_img = (np.random.rand(512, 512, 3) * 255.).astype('uint8').astype(float)
+        if starting_patch is None:
+            patch_img = (np.random.rand(512, 512, 3) * 255.).astype('uint8').astype(float)
+        else:
+            patch_img = np.asfarray(Image.open(starting_patch).convert('RGB'))
         patch_img -= self.config.mean_rgb
         patch_img /= self.config.stddev_rgb
         self._patch = tf.Variable(patch_img, trainable=True, name='patch', dtype=tf.float32,
@@ -45,8 +48,6 @@ class PatchAttacker(tf.keras.Model):
         self._patcher = Patcher(self._patch, self._histmatch, min_patch_height=min_patch_height, name='Patcher')
         self._images = None
         self._labels = None
-        self.cur_train_step = tf.Variable(0, trainable=False, dtype=tf.int64)
-        self.cur_test_step = tf.Variable(0, trainable=False, dtype=tf.int64)
         tf.constant(1, tf.int64)
         self.cur_step = None
         self.tb = None
@@ -100,18 +101,8 @@ class PatchAttacker(tf.keras.Model):
             nms_scores = tf.RaggedTensor.from_tensor(nms_scores, lengths=nms_valid_len)
         return nms_boxes, nms_scores
 
-    def call(self, inputs, *, training=True):
-        if isinstance(inputs, (tuple, list)):
-            images, self._labels = inputs
-        else:
-            images, self._labels = inputs, None
-
-        self._labels = None
-
-        if self._labels is None:
-            boxes = self._labels = self.first_pass(images)
-        else:
-            boxes = self._labels
+    def call(self, images, *, training=True):
+        boxes = self._labels = self.first_pass(images)
 
         with tf.GradientTape() as tape:
             self._images = self._patcher([boxes, images])
@@ -159,26 +150,20 @@ class PatchAttacker(tf.keras.Model):
                               (strided - self._patch[1:, :-1]) ** 2.) ** .5) * self._patch_loss_multiplier
 
     def train_step(self, inputs):
-        self.cur_step = self.cur_train_step
-        self.cur_step.assign_add(tf.constant(1, tf.int64))
+        self.cur_step = self.tb._train_step
         self.reset_state()
         grads = self(inputs)
         grads = tf.where(tf.math.is_nan(grads), tf.zeros_like(grads), grads)
         self.optimizer.apply_gradients([(grads, self._patch)])
-        ret = {'loss': self.losses[0],
-               # 'tv_loss': self.losses[1]
-               }
+        ret = {'loss': self.losses[0]}
         ret.update({m.name: m.result() for m in self.metrics})
         return ret
 
     def test_step(self, inputs):
-        self.cur_step = self.cur_test_step
-        self.cur_step.assign_add(tf.constant(1, tf.int64))
+        self.cur_step = self.tb._val_step
         self.reset_state()
         self(inputs, training=False)
-        ret = {'loss': self.losses[0],
-               # 'tv_loss': self.losses[1]
-               }
+        ret = {'loss': self.losses[0]}
         ret.update({m.name: m.result() for m in self.metrics})
         return ret
 
@@ -186,7 +171,8 @@ class PatchAttacker(tf.keras.Model):
         self._images = self._labels = None
 
     def save_weights(self, filepath, **kwargs):
-        plt.imsave(filepath, self.get_patch())
+        im = Image.fromarray(self.get_patch())
+        im.save(filepath)
 
 
 class Denormalizer(tf.keras.layers.Layer):
@@ -329,9 +315,8 @@ def main(download_model=False):
                                                                       initial_value_threshold=None,
                                                                       )
                                    ])
-    patch = model.get_patch()
-    plt.imshow(patch)
-    plt.show()
+    patch = Image.fromarray(model.get_patch())
+    patch.show('patch')
 
 
 if __name__ == '__main__':

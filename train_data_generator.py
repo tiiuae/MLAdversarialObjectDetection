@@ -23,10 +23,9 @@ logger = util.get_logger(__name__)
 
 class COCOPersonsSequence(tf.keras.utils.Sequence):
 
-    def __init__(self, img_dir, label_dir, output_size, mean_rgb, stddev_rgb, *, file_list=None, shuffle=True):
+    def __init__(self, img_dir, output_size, mean_rgb, stddev_rgb, *, file_list=None, shuffle=True):
         super().__init__()
         self._img_dir = img_dir
-        self._label_dir = label_dir
         self._output_size = output_size
         self._mean_rgb = mean_rgb
         self._stddev_rgb = stddev_rgb
@@ -34,13 +33,8 @@ class COCOPersonsSequence(tf.keras.utils.Sequence):
         self._shuffle = shuffle
 
     def _read_files(self, filename):
-        boxes = []
         im = _read_image(self._img_dir, filename)
-        filename = os.path.extsep.join([os.path.splitext(filename)[0], 'txt'])
-        with open(os.path.join(self._label_dir, filename)) as f:
-            for line in f.readlines():
-                boxes.append(_parse_line(line))
-        return self._map_fn(im, np.array(boxes))
+        return self._map_fn(im)
 
     def clip_boxes(self, boxes):
         """Clip boxes to fit in an image."""
@@ -52,7 +46,7 @@ class COCOPersonsSequence(tf.keras.utils.Sequence):
         boxes = np.hstack([ymin, xmin, ymax, xmax])
         return boxes
 
-    def _map_fn(self, image, boxes):
+    def _map_fn(self, image):
         h, w, c = image.shape
         image = image.astype(float)
         image -= self._mean_rgb
@@ -67,11 +61,7 @@ class COCOPersonsSequence(tf.keras.utils.Sequence):
         scaled_image = cv2.resize(image, [scaled_width, scaled_height])
         output_image = np.zeros((*self._output_size, c))
         output_image[:scaled_height, :scaled_width, :] = scaled_image
-
-        boxes *= image_scale
-        boxes = self.clip_boxes(boxes)
-        boxes = boxes[(boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1]) > 0.]  # sane boxes only allowed
-        return output_image, boxes
+        return output_image
 
     def __len__(self):
         return len(self._flist)
@@ -86,9 +76,8 @@ class COCOPersonsSequence(tf.keras.utils.Sequence):
 
         i = 0
         while True:
-            image, boxes = self[i]
-            yield (tf.convert_to_tensor(image, dtype=tf.float32),
-                   tf.RaggedTensor.from_tensor(tf.convert_to_tensor(boxes, dtype=tf.float32)))
+            image = self[i]
+            yield tf.convert_to_tensor(image, dtype=tf.float32)
             i += 1
             if i == len(self):
                 if self._shuffle:
@@ -142,15 +131,15 @@ def partition(config, img_dir, label_dir, min_height_ratio=.7, min_width_ratio=.
 
     def get_tf_dataset(start, end):
         output_size = utils.parse_image_size(config.image_size)
-        dseq = COCOPersonsSequence(img_dir, label_dir, output_size, config.mean_rgb, config.stddev_rgb,
+        dseq = COCOPersonsSequence(img_dir, output_size, config.mean_rgb, config.stddev_rgb,
                                    file_list=file_list[start:end], shuffle=shuffle)
-        return tf.data.Dataset.from_generator(dseq, output_signature=(
-            tf.TensorSpec(shape=(*output_size, 3), dtype=tf.float32),
-            tf.RaggedTensorSpec(shape=(None, 4), dtype=tf.float32))).batch(batch_size).prefetch(10)
+        return tf.data.Dataset.from_generator(dseq, output_signature=tf.TensorSpec(shape=(*output_size, 3),
+                                                                                   dtype=tf.float32)
+                                              ).batch(batch_size).prefetch(10)
 
     train_ds = get_tf_dataset(0, train_size)
-    val_ds = get_tf_dataset(train_size, train_size+val_size)
-    test_ds = get_tf_dataset(train_size+val_size, ds_size)
+    val_ds = get_tf_dataset(train_size, train_size + val_size)
+    test_ds = get_tf_dataset(train_size + val_size, ds_size)
 
     return {'train': {'dataset': train_ds, 'length': math.ceil(train_size / batch_size)},
             'val': {'dataset': val_ds, 'length': math.ceil(val_size / batch_size)},
