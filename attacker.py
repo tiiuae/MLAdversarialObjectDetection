@@ -11,7 +11,7 @@ import os
 
 import numpy as np
 import tensorflow as tf
-from PIL import Image
+import tifffile
 
 import custom_callbacks
 import histogram_matcher
@@ -37,7 +37,7 @@ class PatchAttacker(tf.keras.Model):
         if starting_patch is None:
             patch_img = (np.random.rand(512, 512, 3) * 255.).astype('uint8').astype(float)
         else:
-            patch_img = np.asfarray(Image.open(starting_patch).convert('RGB'))
+            patch_img = tifffile.imread(starting_patch)
         patch_img -= self.config.mean_rgb
         patch_img /= self.config.stddev_rgb
         self._patch = tf.Variable(patch_img, trainable=True, name='patch', dtype=tf.float32,
@@ -58,7 +58,7 @@ class PatchAttacker(tf.keras.Model):
         self._patch_loss_multiplier = tf.constant(patch_loss_multiplier, tf.float32)
 
     def get_patch(self):
-        return self._denorm(self._patch).numpy()
+        return self._denorm(self._patch, cast_uint=False).numpy()
 
     def first_pass(self, images):
         with tf.name_scope('first_pass'):
@@ -171,8 +171,7 @@ class PatchAttacker(tf.keras.Model):
         self._images = self._labels = None
 
     def save_weights(self, filepath, **kwargs):
-        im = Image.fromarray(self.get_patch())
-        im.save(filepath)
+        tifffile.imwrite(filepath, self.get_patch())
 
 
 class Denormalizer(tf.keras.layers.Layer):
@@ -180,8 +179,12 @@ class Denormalizer(tf.keras.layers.Layer):
         super().__init__(*args, trainable=False, **kwargs)
         self.config = config
 
-    def call(self, inputs):
-        return tf.cast(inputs * self.config.stddev_rgb + self.config.mean_rgb, tf.uint8)
+    def call(self, inputs, cast_uint=True):
+        res = inputs * self.config.stddev_rgb + self.config.mean_rgb
+        if cast_uint:
+            return tf.cast(res, tf.uint8)
+        return res
+
 
 
 class Patcher(tf.keras.layers.Layer):
@@ -272,6 +275,7 @@ def get_victim_model(download_model=False):
 
 
 def main(download_model=False):
+    from PIL import Image
     # noinspection PyShadowingNames
     logger = util.get_logger(__name__, logging.DEBUG)
 
@@ -297,7 +301,7 @@ def main(download_model=False):
     model.tb = tb_callback
 
     save_dir = util.ensure_empty_dir('save_dir')
-    save_file = 'patch_{epoch:02d}.png'
+    save_file = 'patch_{epoch:02d}_{val_mean_asr:.4f}.tiff'
     history = model.fit(train_ds,
                         validation_data=val_ds,
                         epochs=100,
@@ -305,9 +309,9 @@ def main(download_model=False):
                         validation_steps=20,#val_len,
                         callbacks=[tb_callback,
                                    tf.keras.callbacks.ModelCheckpoint(os.path.join(save_dir, save_file),
-                                                                      monitor='val_loss',
+                                                                      monitor='val_mean_asr',
                                                                       verbose=1,
-                                                                      save_best_only=True,
+                                                                      save_best_only=False,
                                                                       save_weights_only=True,
                                                                       mode='auto',
                                                                       save_freq='epoch',
@@ -315,7 +319,7 @@ def main(download_model=False):
                                                                       initial_value_threshold=None,
                                                                       )
                                    ])
-    patch = Image.fromarray(model.get_patch())
+    patch = Image.fromarray(model.get_patch().astype('uint8'))
     patch.show('patch')
 
 
