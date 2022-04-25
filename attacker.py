@@ -251,9 +251,9 @@ class Patcher(tf.keras.layers.Layer):
 
         shape = tf.cast(tf.shape(image), tf.float32)
         ymin_patch = tf.cond(tf.greater(ymin_patch + patch_h, shape[0]),
-                             lambda: shape[1] - patch_h, lambda: ymin_patch)
+                             lambda: shape[0] - patch_h, lambda: ymin_patch)
         xmin_patch = tf.cond(tf.greater(xmin_patch + patch_w, shape[1]),
-                             lambda: shape[2] - patch_w, lambda: xmin_patch)
+                             lambda: shape[1] - patch_w, lambda: xmin_patch)
 
         return tf.stack([ymin_patch, xmin_patch, patch_h, patch_w])
 

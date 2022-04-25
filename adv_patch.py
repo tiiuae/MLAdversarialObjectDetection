@@ -83,48 +83,33 @@ class AdversarialPatch:
         self._patch_img = (np.random.rand(h, w, 3) * 255).astype('uint8')
 
     @staticmethod
-    def create(bbox, *, aspect=1., origin=(.5, .3), scale=.2, area_thresh_px=600):
+    def create(img, bbox, *, aspect=1., scale=.5):
         ymin, xmin, h, w = bbox
 
-        if h * w < area_thresh_px:
-            return
+        patch_w = h * scale
+        patch_h = aspect * patch_w
 
-        ymin_patch = ymin + h * origin[1]
-        xmin_patch = xmin + w * origin[0]
+        orig_y = ymin + h / 2.
+        orig_x = xmin + w / 2.
 
-        patch_h = h * scale
-        patch_w = aspect * patch_h
+        ymin_patch = max(orig_y - patch_h / 2., 0.)
+        xmin_patch = max(orig_x - patch_w / 2., 0.)
 
-        #TODO: implement random rotation about BB center
-        #TODO: BONUS - random rotation about image axis
+        img_h, img_w, _ = img.shape
+        if ymin_patch + patch_h > img_h:
+            ymin_patch = img_h - patch_h
+
+        if xmin_patch + patch_w > img_w:
+            ymin_patch = img_w - patch_w
 
         return list(map(int, (ymin_patch, xmin_patch, patch_h, patch_w)))
 
     def add_adv_to_img(self, img: np.ndarray, bbox):
-        h, w, _ = self._patch_img.shape
-        img_h, img_w, c = img.shape
-        pts1 = np.float32([[0, 0], [w, 0], [w, h], [0, h]])
+        ymin_patch, xmin_patch, patch_h, patch_w = self.create(img, bbox)
+        patch = cv2.resize(self._patch_img, (patch_w, patch_h))
 
-        ymin_patch, xmin_patch, patch_h, patch_w = self.create(bbox)
-        pts2 = np.float32([[xmin_patch, ymin_patch],
-                           [min(xmin_patch + patch_w, img_w), ymin_patch],
-                           [min(xmin_patch + patch_w, img_w), min(ymin_patch + patch_h, img_h)],
-                           [xmin_patch, min(ymin_patch + patch_h, img_h)]])
-
-        hm, mask = cv2.findHomography(pts1, pts2)
-        adv_reg = cv2.warpPerspective(self._patch_img, hm, (img_w, img_h))
-
-        mask2 = np.zeros_like(img)
-        roi_corners2 = np.int32(pts2)
-
-        ignore_mask_color2 = (255,) * c
-
-        mask2 = cv2.fillConvexPoly(mask2, roi_corners2, ignore_mask_color2)
-        mask2 = cv2.bitwise_not(mask2)
-        masked_image2 = cv2.bitwise_and(img, mask2)
-
-        # Using Bitwise or to merge the two images
-        return cv2.bitwise_or(adv_reg, masked_image2)
+        img[ymin_patch: ymin_patch + patch_h, xmin_patch: xmin_patch + patch_w] = patch
+        return img
 
 
 def main():
@@ -133,7 +118,7 @@ def main():
 
     im = np.asarray(Image.open('burj_khalifa_sunset.jpg'))
     adv_patch = AdversarialPatch(100, 100)
-    bbox = ymin, xmin, h, w = 50, 125, 300, 400
+    bbox = ymin, xmin, h, w = 50, 125, 400, 200
     im = adv_patch.add_adv_to_img(im, bbox)
     plt.imshow(im)
     rect = patches.Rectangle((xmin, ymin), w, h, linewidth=1, edgecolor='r', facecolor='none')
