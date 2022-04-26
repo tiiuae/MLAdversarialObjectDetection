@@ -20,14 +20,13 @@ logger = util.get_logger(__name__)
 
 class Detector:
     """Inference with efficientDet object detector"""
-    def __init__(self, *, download_model=False, min_score_thresh=.5):
+    def __init__(self, *, download_model=False):
         if download_model:
             # Download checkpoint.
             util.download(MODEL)
             logger.info(f'Using model in {MODEL}')
 
         self.driver = infer_lib.KerasDriver(MODEL, debug=False, model_name=MODEL)
-        self.min_score_thresh = min_score_thresh
 
     def infer(self, frame, max_boxes=200):
         raw_frames = np.array([frame])
@@ -41,7 +40,7 @@ class Detector:
         for i in range(boxes.shape[0]):
             if max_boxes == n_boxes:
                 break
-            if scores[i] > self.min_score_thresh and classes[i] == 1:
+            if classes[i] == 1:
                 bb.append(tuple(boxes[i].tolist()))
                 sc.append(scores[i])
                 n_boxes += 1
@@ -59,6 +58,7 @@ def main():
     stream = Stream()
     for frame in stream.play():
         bb, sc = detector.infer(frame)
+        bb, sc = util.filter_by_thresh(bb, sc, .5)
         frame = util.draw_boxes(frame, bb, sc)
         logger.debug(f'{bb}, {sc}')
         cv2.imshow('Frame', frame.astype(np.uint8))

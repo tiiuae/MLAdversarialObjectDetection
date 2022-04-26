@@ -10,6 +10,7 @@ import os
 import shutil
 import tarfile
 
+import cv2
 import requests
 import shapely.geometry
 import tensorflow as tf
@@ -83,7 +84,7 @@ def draw_boxes(frame, bb, sc):
             ymax,
             xmax,
             color='green',
-            thickness=2,
+            thickness=1,
             display_str_list=[f'person: {int(100 * score)}%'], use_normalized_coordinates=False)
 
     return frame
@@ -98,3 +99,26 @@ def calculate_iou(box_1, box_2):
     poly_1 = shapely.geometry.Polygon(convert_to_shapely_format(box_1))
     poly_2 = shapely.geometry.Polygon(convert_to_shapely_format(box_2))
     return poly_1.intersection(poly_2).area / poly_1.union(poly_2).area
+
+
+def puttext(img, text, pos, **txt_kwargs):
+        font_scale = txt_kwargs.get('font_scale')
+        font_color = txt_kwargs.get('font_color')
+        thickness = txt_kwargs.get('thickness')
+        line_type = txt_kwargs.get('line_type')
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        bottom_left_corner_of_text = pos
+        cv2.putText(img, text,
+                    bottom_left_corner_of_text,
+                    font,
+                    font_scale,
+                    font_color,
+                    thickness,
+                    line_type)
+
+
+def filter_by_thresh(bb, sc, score_thresh):
+    inds = [s >= score_thresh for s in sc]
+    sc = [sc[i] for i in range(len(sc)) if inds[i]]
+    bb = [bb[i] for i in range(len(bb)) if inds[i]]
+    return bb, sc
