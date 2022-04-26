@@ -20,18 +20,21 @@ class Stream:
         if not self.cap.isOpened():
             print('Error opening input video: {}'.format(filename))
 
-    def playing(self):
+    def play(self):
         while self.cap.isOpened():
             ret, frame = self.cap.read()
             if not ret:
                 logger.error('failed to read frame')
                 continue
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             yield frame
+
+        self.cap.release()
 
 
 def main():
     stream = Stream()
-    for frame in stream.playing():
+    for frame in stream.play():
         cv2.imshow('Frame', frame)
         # Press Q on keyboard to  exit
         if cv2.waitKey(1) & 0xFF == ord('q'):

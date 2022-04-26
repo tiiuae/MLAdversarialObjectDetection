@@ -19,7 +19,7 @@ def project(img):
 def main():
     from streaming import Stream
     stream = Stream()
-    for frame in stream.playing():
+    for frame in stream.play():
         print(project(frame), 'done')
         cv2.imshow('Frame', frame.astype(np.uint8))
         # Press Q on keyboard to  exit

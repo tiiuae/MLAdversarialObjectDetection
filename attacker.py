@@ -186,10 +186,9 @@ class Denormalizer(tf.keras.layers.Layer):
         return res
 
 
-
 class Patcher(tf.keras.layers.Layer):
     def __init__(self, patch: tf.Variable, histmatcher, *args, aspect=1., origin=(.5, .5),
-                 scale=.5, min_patch_height=60, **kwargs):
+                 scale=.3, min_patch_height=60, **kwargs):
         super().__init__(*args, trainable=False, **kwargs)
         self._patch = patch
         self._matcher = histmatcher

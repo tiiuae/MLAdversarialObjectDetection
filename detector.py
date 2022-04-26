@@ -13,7 +13,6 @@ import tensorflow as tf
 
 import util
 from automl.efficientdet.tf2 import infer_lib
-from visualize.vis_utils import draw_bounding_box_on_image_array
 
 MODEL = 'efficientdet-lite4'
 logger = util.get_logger(__name__)
@@ -21,15 +20,16 @@ logger = util.get_logger(__name__)
 
 class Detector:
     """Inference with efficientDet object detector"""
-    def __init__(self, *, download_model=False):
+    def __init__(self, *, download_model=False, min_score_thresh=.5):
         if download_model:
             # Download checkpoint.
             util.download(MODEL)
             logger.info(f'Using model in {MODEL}')
 
         self.driver = infer_lib.KerasDriver(MODEL, debug=False, model_name=MODEL)
+        self.min_score_thresh = min_score_thresh
 
-    def infer(self, frame, return_annotations_only=True, max_boxes=200, min_score_thresh=.5):
+    def infer(self, frame, max_boxes=200):
         raw_frames = np.array([frame])
         detections_bs = self.driver.serve(raw_frames)
         logger.debug([type(x) for x in detections_bs])
@@ -41,27 +41,12 @@ class Detector:
         for i in range(boxes.shape[0]):
             if max_boxes == n_boxes:
                 break
-            if scores[i] > min_score_thresh and classes[i] == 1:
+            if scores[i] > self.min_score_thresh and classes[i] == 1:
                 bb.append(tuple(boxes[i].tolist()))
                 sc.append(scores[i])
                 n_boxes += 1
 
-        if return_annotations_only:
-            return bb, sc
-
-        for box, score in zip(bb, sc):
-            ymin, xmin, ymax, xmax = box
-            draw_bounding_box_on_image_array(
-                frame,
-                ymin,
-                xmin,
-                ymax,
-                xmax,
-                color='green',
-                thickness=2,
-                display_str_list=[f'person: {int(100 * score)}%'], use_normalized_coordinates=False)
-
-        return frame, bb, sc
+        return bb, sc
 
 
 def main():
@@ -72,8 +57,9 @@ def main():
 
     from streaming import Stream
     stream = Stream()
-    for frame in stream.playing():
-        frame, bb, sc = detector.infer(frame, return_annotations_only=False)
+    for frame in stream.play():
+        bb, sc = detector.infer(frame)
+        frame = util.draw_boxes(frame, bb, sc)
         logger.debug(f'{bb}, {sc}')
         cv2.imshow('Frame', frame.astype(np.uint8))
         # Press Q on keyboard to  exit

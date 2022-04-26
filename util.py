@@ -11,7 +11,10 @@ import shutil
 import tarfile
 
 import requests
+import shapely.geometry
 import tensorflow as tf
+
+from visualize.vis_utils import draw_bounding_box_on_image_array
 
 
 @tf.function
@@ -68,3 +71,30 @@ def ensure_empty_dir(dirname):
         shutil.rmtree(dirname, ignore_errors=True)
         os.makedirs(dirname)
     return dirname
+
+
+def draw_boxes(frame, bb, sc):
+    for box, score in zip(bb, sc):
+        ymin, xmin, ymax, xmax = box
+        draw_bounding_box_on_image_array(
+            frame,
+            ymin,
+            xmin,
+            ymax,
+            xmax,
+            color='green',
+            thickness=2,
+            display_str_list=[f'person: {int(100 * score)}%'], use_normalized_coordinates=False)
+
+    return frame
+
+
+def convert_to_shapely_format(box):
+    ymin, xmin, ymax, xmax = box
+    return [[ymin, xmin], [ymin, xmax], [ymax, xmax], [ymax, xmin]]
+
+
+def calculate_iou(box_1, box_2):
+    poly_1 = shapely.geometry.Polygon(convert_to_shapely_format(box_1))
+    poly_2 = shapely.geometry.Polygon(convert_to_shapely_format(box_2))
+    return poly_1.intersection(poly_2).area / poly_1.union(poly_2).area
