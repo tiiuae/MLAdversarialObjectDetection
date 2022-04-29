@@ -11,8 +11,8 @@ import tensorflow as tf
 
 
 class AttackSuccessRate:
-    def __init__(self, min_bbox_height, *, iou_thresh=.5, ):
-        self._min_bbox_height = tf.constant(min_bbox_height, tf.float32)
+    def __init__(self, *, iou_thresh=.5, ):
+        # self._min_bbox_height = tf.constant(min_bbox_height, tf.float32)
         self._iou_thresh = tf.constant(iou_thresh, tf.float32)
         self._loop_var = tf.Variable(0, trainable=False, dtype=tf.int32)
         self._result = None
@@ -29,9 +29,9 @@ class AttackSuccessRate:
             boxes_gt_height = boxes_gt[:, 2] - boxes_gt[:, 0]
             boxes_gt_width = boxes_gt[:, 3] - boxes_gt[:, 1]
             boxes_gt_area = boxes_gt_height * boxes_gt_width
-            atk_attempts = tf.where(tf.greater(boxes_gt_height, self._min_bbox_height))
-            boxes_gt = tf.gather_nd(boxes_gt, atk_attempts)
-            boxes_gt_area = tf.gather_nd(boxes_gt_area, atk_attempts)
+            # atk_attempts = tf.where(tf.greater_equal(boxes_gt_height, self._min_bbox_height))
+            # boxes_gt = tf.gather_nd(boxes_gt, atk_attempts)
+            # boxes_gt_area = tf.gather_nd(boxes_gt_area, atk_attempts)
 
             atk_attempt_count = tf.cast(tf.shape(boxes_gt)[0], tf.float32) + tf.constant(1e-6)
 
@@ -69,9 +69,10 @@ class AttackSuccessRate:
         box_h = box[2] - box[0]
         box_w = box[3] - box[1]
         box_area = box_h * box_w
-        cond1 = tf.greater(box_h, self._min_bbox_height)
+        # cond1 = tf.greater(box_h, self._min_bbox_height)
         cond2 = tf.greater(inter_area / (box_area + box_gt_area - inter_area), self._iou_thresh)
-        return tf.logical_and(cond1, cond2)
+        # return tf.logical_and(cond1, cond2)
+        return cond2
 
     def _calc_valid(self, boxes_gt, boxes_gt_area, box):
         fn = functools.partial(self._is_valid, boxes_gt, boxes_gt_area, box)
