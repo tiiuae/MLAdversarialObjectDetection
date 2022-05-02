@@ -13,8 +13,8 @@ def define_generator():
     model = tf.keras.models.Sequential(name='generator')
     model.add(tf.keras.layers.Dense(128, activation=tf.nn.leaky_relu, input_dim=2))
     # model.add(tf.keras.layers.Dense(256, activation=tf.nn.leaky_relu))
-    model.add(tf.keras.layers.Dense(3 * 512 * 512, activation='sigmoid'))
-    model.add(tf.keras.layers.Reshape((512, 512, 3)))
+    model.add(tf.keras.layers.Dense(512 * 512, activation='sigmoid'))
+    model.add(tf.keras.layers.Reshape((512, 512, 1)))
     model.compile(run_eagerly=False)
 
     return model
@@ -31,13 +31,9 @@ def define_regressor():
 
 def tv_loss(tensors):
     """TV loss"""
-    strided = tensors[:, -1, :-1]
-    return tf.reduce_sum(((strided - tensors[:, -1, 1:]) ** 2. +
+    strided = tensors[:, -1:, :-1]
+    return tf.reduce_mean(((strided - tensors[:, -1:, 1:]) ** 2. +
                           (strided - tensors[:, 1:, :-1]) ** 2.) ** .5)
-
-
-def bg_loss(tensor):
-    return tf.reduce_mean(tensor ** 2.)
 
 
 def main():
