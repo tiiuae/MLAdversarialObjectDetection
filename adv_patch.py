@@ -10,21 +10,24 @@ import numpy as np
 import tifffile
 import skimage.exposure
 
+import generator
+
 
 class AdversarialPatch:
 
-    def __init__(self, *, h=512, w=512, patch_file=None):
+    def __init__(self, *, scale_weights, h=512, w=512, patch_file=None):
         if patch_file is not None:
             self._patch_img = tifffile.imread(patch_file).astype('uint8')
         else:
             self._patch_img = (np.random.rand(h, w, 3) * 255).astype('uint8')
+        self._scale_gen = generator.define_generator()
+        self._scale_gen.load_weights(scale_weights)
 
-    @staticmethod
-    def _create(img, bbox, *, aspect=1., scale=.5):
+    def _create(self, img, bbox, *, aspect=1.):
         ymin, xmin, ymax, xmax = bbox
         h, w = ymax - ymin, xmax - xmin
 
-        patch_w = h * scale
+        patch_w = h * self._scale_gen.predict(np.array([h, w]))
         patch_h = aspect * patch_w
 
         orig_y = ymin + h / 2.
