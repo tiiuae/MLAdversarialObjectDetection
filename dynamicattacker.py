@@ -62,23 +62,25 @@ class DynamicPatchAttacker(tf.keras.Model):
     def get_patch(self):
         return self._denorm(self._patch, cast_uint=False).numpy()
 
+    def filter_valid_boxes(self, images, boxes):
+        boxes_h = boxes[:, :, 2] - boxes[:, :, 0]
+        boxes_w = boxes[:, :, 3] - boxes[:, :, 1]
+        _, h, w, _ = tf.unstack(tf.cast(tf.shape(images), tf.float32))
+        boxes_area = (boxes_h * boxes_w) / (h * w)
+        return tf.logical_and(tf.less(boxes_area, tf.constant(.5)), tf.greater(boxes_area, tf.constant(.01)))
+
     def first_pass(self, images):
         with tf.name_scope('first_pass'):
             boxes, scores, classes, _ = self.model(images, pre_mode=None)
             person_indices = tf.equal(classes, tf.constant(1.))
             boxes = tf.ragged.boolean_mask(boxes, person_indices)
-            boxes_h = boxes[:, :, 2] - boxes[:, :, 0]
-            boxes_w = boxes[:, :, 3] - boxes[:, :, 1]
-            _, h, w, _ = tf.unstack(tf.cast(tf.shape(images), tf.float32))
-            boxes_area = (boxes_h * boxes_w) / (h * w)
-            valid_boxes = tf.logical_and(tf.less(boxes_area, tf.constant(.5)),
-                                         tf.greater(boxes_area, tf.constant(.01)))
+            valid_boxes = self.filter_valid_boxes(images, boxes)
             boxes = tf.ragged.boolean_mask(boxes, valid_boxes)
         return boxes
 
-    def second_pass(self, image):
+    def second_pass(self, images):
         with tf.name_scope('attack_pass'):
-            cls_outputs, box_outputs = self.model(image, pre_mode=None, post_mode=None)
+            cls_outputs, box_outputs = self.model(images, pre_mode=None, post_mode=None)
             cls_outputs = postprocess.to_list(cls_outputs)
             box_outputs = postprocess.to_list(box_outputs)
             boxes, scores, classes = postprocess.pre_nms(self.config.as_dict(), cls_outputs, box_outputs)
@@ -88,15 +90,8 @@ class DynamicPatchAttacker(tf.keras.Model):
             boxes = tf.ragged.boolean_mask(boxes, person_indices)
             classes = tf.ragged.boolean_mask(classes, person_indices)
 
-            boxes_h = boxes[:, :, 2] - boxes[:, :, 0]
-            boxes_w = boxes[:, :, 3] - boxes[:, :, 1]
-            _, h, w, _ = tf.unstack(tf.cast(tf.shape(image), tf.float32))
-            boxes_area = (boxes_h * boxes_w) / (h * w)
-            valid_boxes = tf.logical_and(tf.less(boxes_area, tf.constant(.5)),
-                                         tf.greater(boxes_area, tf.constant(.01)))
-
+            valid_boxes = self.filter_valid_boxes(images, boxes)
             scores = tf.ragged.boolean_mask(scores, valid_boxes)
-
             boxes = tf.ragged.boolean_mask(boxes, valid_boxes)
             classes = tf.ragged.boolean_mask(classes, valid_boxes)
         return boxes, scores, classes
