@@ -28,7 +28,7 @@ class HistogramMatcher(tf.keras.layers.Layer):
         src, tgt = inputs
         src = self._rescale_0_1(src)
         tgt = self._rescale_0_1(tgt)
-        src = tf.image.rgb_to_yuv(src)
+        # src = tf.image.rgb_to_yuv(src)
         tgt = tf.image.rgb_to_yuv(tgt)
         h, w, _ = tf.unstack(tf.shape(src))
         floating_space = tf.clip_by_value(tf.range(0., 1.00001, delta=1. / 255., dtype=tf.float32), 0., 1.)
@@ -39,8 +39,8 @@ class HistogramMatcher(tf.keras.layers.Layer):
         pxmap = self.interpolate(cdftgt, floating_space, cdfsrc)
         pxmap = self.interpolate(floating_space, pxmap, tf.reshape(source, (h * w,)))
         pxmap = tf.reshape(pxmap, (h, w))
-        res = [pxmap, src[..., 1], src[..., 2]]
-        res = tf.clip_by_value(tf.image.yuv_to_rgb(tf.stack(res, axis=2)), 0., 1.)
+        pxmap = tf.reshape(pxmap, (h, w, 1))
+        res = tf.clip_by_value(pxmap, 0., 1.)
         res = self._rescale_back(res)
 
         # with self._writer.as_default():

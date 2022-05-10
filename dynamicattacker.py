@@ -36,7 +36,7 @@ class DynamicPatchAttacker(tf.keras.Model):
         if config_override:
             self.model.config.override(config_override)
         if initial_weights is None:
-            patch_img = (np.random.rand(512, 512, 3) * 255.).astype('uint8').astype(float)
+            patch_img = (np.random.rand(512, 512, 1) * 255.).astype('uint8').astype(float)
         else:
             patch_img = tifffile.imread(os.path.join(initial_weights, 'patch.tiff'))
         patch_img -= self.config.mean_rgb
@@ -62,19 +62,27 @@ class DynamicPatchAttacker(tf.keras.Model):
     def get_patch(self):
         return self._denorm(self._patch, cast_uint=False).numpy()
 
-    def filter_valid_boxes(self, images, boxes):
+    def filter_valid_boxes(self, boxes):
         boxes_h = boxes[:, :, 2] - boxes[:, :, 0]
         boxes_w = boxes[:, :, 3] - boxes[:, :, 1]
-        _, h, w, _ = tf.unstack(tf.cast(tf.shape(images), tf.float32))
-        boxes_area = (boxes_h * boxes_w) / (h * w)
-        return tf.logical_and(tf.less(boxes_area, tf.constant(.5)), tf.greater(boxes_area, tf.constant(.01)))
+        boxes_area = boxes_h * boxes_w
+        return tf.greater(boxes_area, tf.constant(400.))
 
     def first_pass(self, images):
         with tf.name_scope('first_pass'):
-            boxes, scores, classes, _ = self.model(images, pre_mode=None)
-            person_indices = tf.equal(classes, tf.constant(1.))
+            cls_outputs, box_outputs = self.model(images, pre_mode=None, post_mode=None)
+            cls_outputs = postprocess.to_list(cls_outputs)
+            box_outputs = postprocess.to_list(box_outputs)
+            boxes, scores, classes = postprocess.pre_nms(self.config.as_dict(), cls_outputs, box_outputs)
+            person_indices = tf.equal(classes, tf.constant(0))  # taking postprocess.CLASS_OFFSET into account
+            scores = tf.ragged.boolean_mask(scores, person_indices)
+
             boxes = tf.ragged.boolean_mask(boxes, person_indices)
-            valid_boxes = self.filter_valid_boxes(images, boxes)
+            classes = tf.ragged.boolean_mask(classes, person_indices)
+
+            boxes, scores = self._postprocessing(boxes, scores, classes)
+
+            valid_boxes = self.filter_valid_boxes(boxes)
             boxes = tf.ragged.boolean_mask(boxes, valid_boxes)
         return boxes
 
@@ -90,10 +98,10 @@ class DynamicPatchAttacker(tf.keras.Model):
             boxes = tf.ragged.boolean_mask(boxes, person_indices)
             classes = tf.ragged.boolean_mask(classes, person_indices)
 
-            valid_boxes = self.filter_valid_boxes(images, boxes)
-            scores = tf.ragged.boolean_mask(scores, valid_boxes)
-            boxes = tf.ragged.boolean_mask(boxes, valid_boxes)
-            classes = tf.ragged.boolean_mask(classes, valid_boxes)
+            # valid_boxes = self.filter_valid_boxes(boxes)
+            # scores = tf.ragged.boolean_mask(scores, valid_boxes)
+            # boxes = tf.ragged.boolean_mask(boxes, valid_boxes)
+            # classes = tf.ragged.boolean_mask(classes, valid_boxes)
         return boxes, scores, classes
 
     def _postprocessing(self, boxes, scores, classes):
@@ -120,7 +128,7 @@ class DynamicPatchAttacker(tf.keras.Model):
             self._images, scale_losses = self._patcher([boxes, images], training=training)
             boxes_pred, scores, classes = self.second_pass(self._images)
             sc_losses = tf.reduce_max(scores, axis=1)
-            loss = tf.reduce_sum(sc_losses + tf.abs(sc_losses - scale_losses))
+            loss = tf.reduce_sum(sc_losses + (sc_losses - scale_losses) ** 2.)
 
         self.add_loss(loss)
         self.add_loss(tf.reduce_sum(scale_losses))
@@ -252,6 +260,7 @@ class Patcher(tf.keras.layers.Layer):
         patch = self._matcher((self._patch, patch_bg))
 
         im = tf.image.resize(patch, tf.stack([patch_h, patch_w]))
+        im = tf.image.grayscale_to_rgb(im)
 
         image = tf.tensor_scatter_nd_update(image, idx, im)
         self._patch_counter.assign_add(tf.constant(1))
