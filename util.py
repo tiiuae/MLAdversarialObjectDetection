@@ -122,3 +122,20 @@ def filter_by_thresh(bb, sc, score_thresh):
     sc = [sc[i] for i in range(len(sc)) if inds[i]]
     bb = [bb[i] for i in range(len(bb)) if inds[i]]
     return bb, sc
+
+
+def centre_loss(delta):
+    h, w, _ = tf.unstack(tf.cast(tf.shape(delta), tf.float32))
+    indices = tf.cast(tf.where(tf.greater(delta, .5)), tf.float32)
+    hind, wind, _ = tf.unstack(indices, axis=1)
+    hind -= .5 * h
+    wind -= .5 * w
+    se = tf.math.square(hind) + tf.math.square(wind)
+    return tf.reduce_max(se)
+
+
+def tv_loss(tensors):
+    """TV loss"""
+    strided = tensors[:, -1:, :-1]
+    return tf.reduce_mean(((strided - tensors[:, -1:, 1:]) ** 2. +
+                          (strided - tensors[:, 1:, :-1]) ** 2.) ** .5)
