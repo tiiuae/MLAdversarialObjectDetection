@@ -33,7 +33,7 @@ class DynamicPatchAttacker(tf.keras.Model):
         self.config = self.model.config
         if config_override:
             self.model.config.override(config_override)
-        self._patch = generator.define_generator(self.config.image_size)
+        self._patch = generator.define_generator()
         if initial_weights is not None:
             self._patch.load_weights(initial_weights)
         self.visualize_freq = tf.constant(visualize_freq, tf.int64)
@@ -270,7 +270,7 @@ class Patcher(tf.keras.layers.Layer):
 
     def call(self, inputs, training=False):
         self._boxes, images = inputs
-        self._patches = self._patch_gen(images)
+        self._patches = self._patch_gen(tf.random.uniform((tf.shape(images)[0], 1, 1, 512)))
         self._batch_counter.assign(tf.constant(0))
         images, losses = tf.map_fn(functools.partial(self.add_patches_to_image, training=training), images,
                                    fn_output_signature=(tf.TensorSpec(shape=images.shape[0], dtype=tf.float32),
