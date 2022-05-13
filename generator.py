@@ -81,13 +81,13 @@ def define_generator():
 
 def define_regressor():
     model = ScaleGen()
-    model.build(input_shape=(None, 2))
+    model.build(input_shape=(None, 1))
     model.compile(run_eagerly=False)
     return model
 
 
 def main():
-    model = define_generator(480)
+    model = define_generator()
     model.summary()
 
 
