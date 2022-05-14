@@ -39,7 +39,7 @@ class DynamicPatchAttacker(tf.keras.Model):
             patch_img = (np.random.rand(512, 512, 1) * 255.).astype('uint8').astype(float)
             patch_img -= self.config.mean_rgb
             patch_img /= self.config.stddev_rgb
-            scale = .25
+            scale = .5
         else:
             patch_img = tifffile.imread(os.path.join(initial_weights, 'patch.tiff'))
             with open(os.path.join(initial_weights, 'scale.txt')) as f:
@@ -224,7 +224,7 @@ class Patcher(tf.keras.layers.Layer):
         h, w, _ = tf.unstack(tf.cast(tf.shape(image), tf.float32))
         boxes = self._boxes[self._batch_counter]
 
-        patch_boxes = tf.vectorized_map(functools.partial(self.create, image, divide=True), boxes)
+        patch_boxes = tf.vectorized_map(functools.partial(self.create, image), boxes)
         patch_boxes = tf.reshape(patch_boxes, shape=(-1, 4))
         valid_indices = tf.where(tf.greater(patch_boxes[:, 2] * patch_boxes[:, 3],
                                             tf.constant(self.min_patch_area, tf.float32)))
@@ -254,33 +254,20 @@ class Patcher(tf.keras.layers.Layer):
         self._patch_counter.assign_add(tf.constant(1))
         return [image, self._patch_counter]
 
-    def create(self, image, item, divide=False, anchor=None):
+    def create(self, image, item):
         ymin, xmin, ymax, xmax = tf.unstack(item, 4)
 
         h = ymax - ymin
         w = xmax - xmin
 
         area = h * w
-        if divide:
-            patch_size = tf.floor(tf.sqrt(area))
-            orig_y = ymin + h / 2.
-            orig_x = xmin + w / 2.
-        else:
-            patch_size = tf.floor(tf.sqrt(area * self._scale * 2.))
-            if anchor == 'left':
-                orig_y = ymin + h / 2.
-                orig_x = xmin
-            else:
-                orig_y = ymax - h / 2.
-                orig_x = xmax
+
+        patch_size = tf.floor(tf.sqrt(area * self._scale))
+        orig_y = ymin + h / 2.
+        orig_x = xmin + w / 2.
 
         patch_w = patch_size
         patch_h = patch_size
-
-        if divide:
-            h1 = self.create(image, tf.stack([ymin, xmin, ymax, orig_x]), anchor='left')
-            h2 = self.create(image, tf.stack([ymin, orig_x, ymax, xmax]), anchor='right')
-            return tf.stack([h1, h2])
 
         ymin_patch = tf.maximum(orig_y - patch_h / 2., 0.)
         xmin_patch = tf.maximum(orig_x - patch_w / 2., 0.)
