@@ -5,6 +5,7 @@ Created: April 25, 2022
 
 Purpose: demonstrate the adversarial patch attack on person detection
 """
+import ast
 import logging
 
 import cv2
@@ -82,7 +83,7 @@ def make_info_frame(info_frame):
     write('Step 1: clean pass through image')
     write('Step 2: on output of step 1, and on persons with scores more')
     write(f'than {thresh}%:')
-    write('a: attack with pretrained adv. patch (50 epochs on COCO)', w_offset=30)
+    write('a: attack with pretrained adv. patch (100 epochs on COCO)', w_offset=30)
     write('b: attack with random adv. patch')
     write('Step 3: in each case, scores are calculated as:', w_offset=-30)
     write('mean(max score per frame before thresholding) over last', w_offset=30)
@@ -96,7 +97,11 @@ def main(input_file=None, save_file=None, live=False):
     dct = detector.Detector(download_model=False)
 
     patch = adv_patch.AdversarialPatch(patch_file='save_dir/patch_50_0.7146.tiff')
-    rand_patch = adv_patch.AdversarialPatch()
+
+    with open('save_dir/patch_70_0.7369/scale.txt') as f:
+        scale = ast.literal_eval(f.read())
+
+    rand_patch = adv_patch.AdversarialPatch(scale=scale)
 
     demo_clean = Demo('clean', dct)
     demo_patch = AttackDemo(patch, 'adv. patch', dct)
