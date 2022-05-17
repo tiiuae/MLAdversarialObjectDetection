@@ -15,14 +15,13 @@ class AttackSuccessRate:
         # self._min_bbox_height = tf.constant(min_bbox_height, tf.float32)
         self._iou_thresh = tf.constant(iou_thresh, tf.float32)
         self._loop_var = tf.Variable(0, trainable=False, dtype=tf.int32)
-        self._result = None
+        self._failed_count = tf.Variable(0., dtype=tf.float32, trainable=False)
+        self._attempts_count = tf.Variable(0., dtype=tf.float32, trainable=False)
 
     def __call__(self, boxes_pred, boxes_true):
         batch_size = tf.cast(boxes_true.nrows(), tf.int32)
-        if self._result is None:
-            self._result = tf.Variable(tf.zeros(shape=(batch_size,), dtype=tf.float32), trainable=False)
-        else:
-            self._result.assign(tf.zeros(shape=(batch_size,), dtype=tf.float32))
+        self._failed_count.assign(tf.constant(0.))
+        self._attempts_count.assign(tf.constant(0.))
 
         def map_fn(_):
             boxes_gt = boxes_true[self._loop_var]
@@ -42,18 +41,19 @@ class AttackSuccessRate:
             func = functools.partial(self._calc_valid, boxes_gt, boxes_gt_area)
             atk_failed_count = tf.cond(tf.greater(tf.shape(boxes_pred[self._loop_var])[0], tf.constant(0)),
                                        atk_failed, lambda: tf.constant(0.)) + tf.constant(1e-6)
-            atk_success_rate = tf.constant(1.) - atk_failed_count / atk_attempt_count
 
-            tf.assert_equal(tf.greater_equal(atk_success_rate, tf.constant(0.)), tf.constant(True))
-
-            self._result[self._loop_var].assign(atk_success_rate)
+            self._failed_count.assign_add(atk_failed_count)
+            self._attempts_count.assign_add(atk_attempt_count)
             self._loop_var.assign_add(1)
             return [_]
 
         self._loop_var.assign(0)
         tf.while_loop(lambda _: tf.less(self._loop_var, batch_size), map_fn, [self._loop_var])
 
-        return tf.reduce_mean(self._result)
+        atk_success_rate = tf.constant(1.) - self._failed_count / self._attempts_count
+        tf.assert_equal(tf.greater_equal(atk_success_rate, tf.constant(0.)), tf.constant(True))
+
+        return atk_success_rate
 
     def _is_valid(self, boxes_gt, boxes_gt_area, box, ind):
         box_gt = boxes_gt[ind]

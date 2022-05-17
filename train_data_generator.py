@@ -96,7 +96,7 @@ def _read_image(img_dir, filename):
     return np.asarray(im)
 
 
-def filter_by_dims(img_dir, label_dir, min_height_ratio, min_width_ratio, aspect, filename):
+def filter_by_dims(img_dir, label_dir, min_area_ratio, aspect, filename):
     return True
     im = _read_image(img_dir, filename)
     h, w, _ = im.shape
@@ -106,20 +106,20 @@ def filter_by_dims(img_dir, label_dir, min_height_ratio, min_width_ratio, aspect
             ymin, xmin, ymax, xmax = _parse_line(line)
             hp = ymax - ymin
             wp = xmax - xmin
-            h_ratio = hp / h
+            area_ratio = hp / h
             w_ratio = wp / w
             ratio = wp / (hp + 1e-12)  # to avoid zero div
-            if h_ratio >= min_height_ratio and w_ratio >= min_width_ratio and ratio >= aspect:
+            if area_ratio >= min_area_ratio and w_ratio >= min_width_ratio and ratio >= aspect:
                 return True
 
 
-def partition(config, img_dir, label_dir, min_height_ratio=.7, min_width_ratio=.1, aspect_ratio=.1,
+def partition(config, img_dir, label_dir, min_area_ratio=.7, aspect_ratio=0.,
               train_split=0.8, val_split=0.1, test_split=0.1, *, batch_size=2,
               shuffle=True):
     assert (train_split + test_split + val_split) == 1.
 
     logger.info('filtering dataset by label constraints...')
-    func = functools.partial(filter_by_dims, img_dir, label_dir, min_height_ratio, min_width_ratio, aspect_ratio)
+    func = functools.partial(filter_by_dims, img_dir, label_dir, min_area_ratio, aspect_ratio)
     file_list = list(filter(func, os.listdir(img_dir)))
     ds_size = len(file_list)
     logger.info(f'done. data size is {ds_size}')

@@ -136,6 +136,6 @@ def centre_loss(delta):
 
 def tv_loss(tensors):
     """TV loss"""
-    strided = tensors[:, -1:, :-1]
-    return tf.reduce_mean(((strided - tensors[:, -1:, 1:]) ** 2. +
-                          (strided - tensors[:, 1:, :-1]) ** 2.) ** .5)
+    strided = tensors[-1:, :-1]
+    return tf.reduce_mean(((strided - tensors[-1:, 1:]) ** 2. +
+                          (strided - tensors[1:, :-1]) ** 2.) ** .5)

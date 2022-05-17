@@ -13,6 +13,7 @@ import os
 import matplotlib.pyplot as plt
 import numpy as np
 import tensorflow as tf
+import tfplot
 from tifffile import tifffile
 
 import custom_callbacks
@@ -36,7 +37,7 @@ class DynamicPatchAttacker(tf.keras.Model):
         if config_override:
             self.model.config.override(config_override)
         if initial_weights is None:
-            patch_img = (np.random.rand(512, 512, 1) * 255.).astype('uint8').astype(float)
+            patch_img = (np.random.rand(512, 512, 3) * 255.).astype('uint8').astype(float)
             patch_img -= self.config.mean_rgb
             patch_img /= self.config.stddev_rgb
             scale = .5
@@ -52,14 +53,14 @@ class DynamicPatchAttacker(tf.keras.Model):
         self.visualize_freq = tf.constant(visualize_freq, tf.int64)
         self._patcher = Patcher(self._patch, self._scale_regressor, min_patch_area=min_patch_area,
                                 name='Patcher')
-        self._images = None
-        self._labels = None
         self.cur_step = None
         self.tb = None
         self._trainable_variables = [self._scale_regressor, self._patch]
 
         iou = self.config.nms_configs.iou_thresh
         self._metric = metrics.AttackSuccessRate(iou_thresh=iou)
+        self.bins = np.arange(self.config.nms_configs.score_thresh, .805, .01, dtype='float32')
+        self.asr = [tf.Variable(0., dtype=tf.float32, trainable=False) for _ in self.bins]
 
     def filter_valid_boxes(self, boxes):
         boxes_h = boxes[:, :, 2] - boxes[:, :, 0]
@@ -83,7 +84,8 @@ class DynamicPatchAttacker(tf.keras.Model):
 
             valid_boxes = self.filter_valid_boxes(boxes)
             boxes = tf.ragged.boolean_mask(boxes, valid_boxes)
-        return boxes
+            scores = tf.ragged.boolean_mask(scores, valid_boxes)
+        return boxes, scores
 
     def second_pass(self, images):
         with tf.name_scope('attack_pass'):
@@ -126,24 +128,23 @@ class DynamicPatchAttacker(tf.keras.Model):
 
     def call(self, images, *, training=True):
         _, h, w, _ = tf.unstack(tf.cast(tf.shape(images), tf.float32))
-        boxes = self._labels = self.first_pass(images)
+        boxes, scores = self.first_pass(images)
 
         with tf.GradientTape() as tape:
-            self._images = self._patcher([boxes, images])
-            boxes_pred, scores, classes = self.second_pass(self._images)
-            sc_losses = tf.reduce_max(scores, axis=1)
-            patch_loss = 1. - tf.reduce_mean(self._patch.value() ** 2.)
-            loss = tf.reduce_sum(sc_losses + (sc_losses - self._scale_regressor) ** 2.) + 1e-2 * patch_loss
+            images = self._patcher([boxes, images])
+            boxes_pred, scores_pred, classes = self.second_pass(images)
+            sc_losses = tf.reduce_max(scores_pred, axis=1)
+            patch_loss = tf.reduce_mean(1. - tf.reduce_mean(self._patch.value() ** 2., axis=2))
+            loss = tf.reduce_sum(sc_losses ** 2. + (sc_losses - self._scale_regressor) ** 2.) + patch_loss
 
         self.add_loss(loss)
         self.add_loss(self._scale_regressor.value())
         self.add_loss(tf.reduce_sum(sc_losses))
         self.add_loss(patch_loss)
 
-        boxes_pred, scores_pred = self._postprocessing(boxes_pred, scores, classes)
-        self.add_metric(self._metric(boxes_pred, boxes), name='mean_asr')
+        boxes_pred, scores_pred = self._postprocessing(boxes_pred, scores_pred, classes)
 
-        func = functools.partial(self.vis_images, boxes_pred, training)
+        func = functools.partial(self.vis_images, images, boxes, scores, boxes_pred, scores_pred, training)
         tf.cond(tf.equal(tf.math.floormod(self.cur_step, self.visualize_freq), tf.constant(0, tf.int64)),
                 func, lambda: None)
 
@@ -152,9 +153,37 @@ class DynamicPatchAttacker(tf.keras.Model):
 
         return boxes_pred, scores_pred
 
-    def vis_images(self, boxes_pred, training):
-        images, labels = self._images, self._labels
+    @staticmethod
+    @tfplot.autowrap(figsize=(4, 4))
+    def plot_asr(x: np.ndarray, y: np.ndarray, step, *, ax, color='blue'):
+        ax.plot(x, y, color=color)
+        ax.set_ylim(0., 1.)
+        ax.set_xlabel('score_thresh')
+        ax.set_ylabel('attack_success_rate')
+        ax.set_title(f'step={step}')
+
+    def vis_images(self, images, labels, scores, boxes_pred, scores_pred, training):
         _, h, w, _ = tf.unstack(tf.cast(tf.shape(images), tf.float32))
+
+        tr = 'train' if training else 'val'
+        with self.tb._writers[tr].as_default():
+            if training:
+                patch = tf.clip_by_value(self._patch * self.config.stddev_rgb + self.config.mean_rgb, 0., 255.)
+                patch = tf.cast(patch, tf.uint8)
+                tf.summary.image('Patch', patch[tf.newaxis], step=self.cur_step)
+
+        if training:
+            for i, score in enumerate(self.bins):
+                filt = tf.greater_equal(scores, tf.constant(score))
+                labels_filt = tf.ragged.boolean_mask(labels, filt)
+
+                filt = tf.greater_equal(scores_pred, tf.constant(score))
+                boxes_pred_filt = tf.ragged.boolean_mask(boxes_pred, filt)
+                self.asr[i].assign(.5 * self.asr[i].value() + .5 * self._metric(boxes_pred_filt, labels_filt))
+            plot = self.plot_asr(self.bins, self.asr, self.cur_step)
+
+            with self.tb._writers[tr].as_default():
+                tf.summary.image('ASR', plot[tf.newaxis], step=self.cur_step)
 
         def convert_format(box):
             ymin, xmin, ymax, xmax = tf.unstack(box.to_tensor(), axis=2)
@@ -166,25 +195,18 @@ class DynamicPatchAttacker(tf.keras.Model):
         images = tf.image.draw_bounding_boxes(images, boxes_pred, tf.constant([[0., 0., 1.]]))
         images = tf.clip_by_value(images * self.config.stddev_rgb + self.config.mean_rgb, 0., 255.)
         images = tf.cast(images, tf.uint8)
-        tr = 'train' if training else 'val'
-        with self.tb._writers[tr].as_default():
-            if training:
-                patch = tf.clip_by_value(self._patch * self.config.stddev_rgb + self.config.mean_rgb, 0., 255.)
-                patch = tf.cast(patch, tf.uint8)
-                tf.summary.image('Patch', patch[tf.newaxis], step=self.cur_step)
 
-            tf.summary.image('Sample', images, step=self.cur_step, max_outputs=tf.shape(self._images)[0])
+        with self.tb._writers[tr].as_default():
+            tf.summary.image('Sample', images, step=self.cur_step, max_outputs=tf.shape(images)[0])
 
     def train_step(self, inputs):
         self.cur_step = self.tb._train_step
-        self.reset_state()
         grads = self(inputs)
         self.optimizer.apply_gradients([*zip(grads, self._trainable_variables)])
         return self.update_metrics()
 
     def test_step(self, inputs):
         self.cur_step = self.tb._val_step
-        self.reset_state()
         self(inputs, training=False)
         return self.update_metrics()
 
@@ -194,16 +216,13 @@ class DynamicPatchAttacker(tf.keras.Model):
         ret.update({m.name: m.result() for m in self.metrics})
         return ret
 
-    def reset_state(self):
-        self._images = self._labels = None
-
     def save_weights(self, dirpath, **kwargs):
         os.makedirs(dirpath)
         with open(os.path.join(dirpath, 'scale.txt'), 'w') as f:
             f.write(str(self._scale_regressor.numpy()))
         patch = tf.clip_by_value(self._patch * self.config.stddev_rgb + self.config.mean_rgb, 0., 255.)
-        patch = tf.cast(patch, tf.uint8).numpy()[:, :, 0]
-        plt.imsave(os.path.join(dirpath, 'patch.png'), patch, cmap='gray')
+        patch = tf.cast(patch, tf.uint8).numpy()
+        plt.imsave(os.path.join(dirpath, 'patch.png'), patch)
         tifffile.imwrite(os.path.join(dirpath, 'patch.tiff'), self._patch.numpy())
 
 
@@ -245,7 +264,7 @@ class Patcher(tf.keras.layers.Layer):
         idx = tf.stack(tf.meshgrid(tf.range(ymin_patch, ymax), tf.range(xmin_patch, xmax), indexing='ij'), axis=-1)
 
         im = tf.image.resize(self._patch, tf.stack([patch_h, patch_w]))
-        im = tf.image.grayscale_to_rgb(im)
+        # im = tf.image.grayscale_to_rgb(im)
         im += tf.random.uniform(shape=tf.shape(im), minval=-.01, maxval=.01)
         im = tf.image.random_brightness(im, .3)
         im = tf.clip_by_value(im, -1., 1.)
@@ -325,7 +344,7 @@ def main(download_model=False):
     model.tb = tb_callback
 
     save_dir = util.ensure_empty_dir('save_dir')
-    save_file = 'patch_{epoch:02d}_{val_mean_asr:.4f}.h5'
+    save_file = 'patch_{epoch:02d}_{val_loss:.4f}.h5'
     history = model.fit(train_ds,
                         validation_data=val_ds,
                         epochs=100,
@@ -333,7 +352,7 @@ def main(download_model=False):
                         validation_steps=20,  # val_len,
                         callbacks=[tb_callback,
                                    tf.keras.callbacks.ModelCheckpoint(os.path.join(save_dir, save_file),
-                                                                      monitor='val_mean_asr',
+                                                                      monitor='val_loss',
                                                                       verbose=1,
                                                                       save_best_only=False,
                                                                       save_weights_only=True,
