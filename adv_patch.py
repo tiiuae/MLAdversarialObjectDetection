@@ -9,14 +9,15 @@ import math
 
 import cv2
 import numpy as np
-import tifffile
+import skimage
+from PIL import Image
 
 
 class AdversarialPatch:
 
     def __init__(self, *, scale, h=512, w=512, patch_file=None):
         if patch_file is not None:
-            self._patch_img = tifffile.imread(patch_file).astype('uint8')
+            self._patch_img = np.asarray(Image.open(patch_file).convert('RGB'))
         else:
             self._patch_img = (np.random.rand(h, w, 3) * 255).astype('uint8')
         self.scale = scale
@@ -45,11 +46,24 @@ class AdversarialPatch:
 
         return list(map(int, (ymin_patch, xmin_patch, patch_h, patch_w)))
 
+    def hist_match(self, tgt):
+        tgt = cv2.cvtColor(tgt, cv2.COLOR_RGB2YUV)
+        src = cv2.cvtColor(self._patch_img, cv2.COLOR_RGB2YUV)
+
+        source, target = src[:, :, 0], tgt[:, :, 0]
+        res = skimage.exposure.match_histograms(source, target)
+
+        src[:, :, 0] = res
+        res = cv2.cvtColor(src, cv2.COLOR_YUV2RGB)
+        return res
+
     def add_adv_to_img(self, img: np.ndarray, bboxes):
         img = img.copy()
         for bbox in bboxes:
             ymin_patch, xmin_patch, patch_h, patch_w = self._create(img, bbox)
-            patch = cv2.resize(self._patch_img, (patch_w, patch_h))
+            patch_bg = img[ymin_patch: ymin_patch + patch_h, xmin_patch: xmin_patch + patch_w]
+            patch = self.hist_match(patch_bg)
+            patch = cv2.resize(patch, (patch_w, patch_h))
 
             img[ymin_patch: ymin_patch + patch_h, xmin_patch: xmin_patch + patch_w] = patch
         return img

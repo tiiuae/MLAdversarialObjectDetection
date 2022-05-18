@@ -139,3 +139,12 @@ def tv_loss(tensors):
     strided = tensors[-1:, :-1]
     return tf.reduce_mean(((strided - tensors[-1:, 1:]) ** 2. +
                           (strided - tensors[1:, :-1]) ** 2.) ** .5)
+
+@tf.function
+def cmyk_to_rgb(patch):
+    c, m, y, k = tf.unstack(patch, axis=2)
+    key = (1. - k)
+    r = 255. * (1. - c) * key
+    g = 255. * (1. - m) * key
+    b = 255. * (1. - y) * key
+    return tf.stack([r, g, b], axis=2)
