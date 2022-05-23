@@ -10,7 +10,41 @@ import tensorflow as tf
 import util
 
 
-class HistogramMatcher(tf.keras.layers.Layer):
+class BrightnessMatcher(tf.keras.layers.Layer):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, trainable=False, **kwargs)
+        # self._writer = tf.summary.create_file_writer('log_dir')
+
+    @staticmethod
+    def _rescale_0_1(img):
+        return (img + tf.constant(1.)) * tf.constant(127. / 255.)
+
+    @staticmethod
+    def _rescale_back(img):
+        return img * tf.constant(255. / 127.) - tf.constant(1.)
+
+    @tf.function
+    def call(self, inputs, **kwargs):
+        src, tgt = inputs
+        src = self._rescale_0_1(src)
+        tgt = self._rescale_0_1(tgt)
+        src = tf.image.rgb_to_yuv(src)
+        tgt = tf.image.rgb_to_yuv(tgt)
+
+        source, target = src[:, :, 0], tgt[:, :, 0]
+        source_mean = tf.reduce_mean(source)
+        target_mean = tf.reduce_mean(target)
+        pxmap = tf.clip_by_value(source - source_mean + target_mean, 0., 1.)
+        res = [pxmap, src[..., 1], src[..., 2]]
+        res = tf.clip_by_value(tf.image.yuv_to_rgb(tf.stack(res, axis=2)), 0., 1.)
+        res = self._rescale_back(res)
+
+        # with self._writer.as_default():
+        #     tf.summary.image('adjusted', tf.cast(res * 127. + 127., tf.uint8)[tf.newaxis], step=0)
+        return res
+
+
+class HistogramMatcher(BrightnessMatcher):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, trainable=False, **kwargs)
         # self._writer = tf.summary.create_file_writer('log_dir')

@@ -38,7 +38,7 @@ class DynamicPatchAttacker(tf.keras.Model):
         if config_override:
             self.model.config.override(config_override)
         if initial_weights is None:
-            patch_img = np.random.rand(512, 512, 4)
+            patch_img = np.random.uniform(-1., 1., size=(512, 512, 3))
             scale = .5
         else:
             patch_img = tifffile.imread(os.path.join(initial_weights, 'patch.tiff'))
@@ -46,12 +46,11 @@ class DynamicPatchAttacker(tf.keras.Model):
                 scale = ast.literal_eval(f.read())
 
         self._patch = tf.Variable(patch_img, trainable=True, name='patch', dtype=tf.float32,
-                                  constraint=lambda x: tf.clip_by_value(x, 0., 1.))
+                                  constraint=lambda x: tf.clip_by_value(x, -1., 1.))
         self._scale_regressor = tf.Variable(scale, trainable=True, name='scale', dtype=tf.float32,
                                             constraint=lambda x: tf.clip_by_value(x, 0., 1.))
         self.visualize_freq = tf.constant(visualize_freq, tf.int64)
-        self._patcher = Patcher(self._patch, self.config, self._scale_regressor, min_patch_area=min_patch_area,
-                                name='Patcher')
+        self._patcher = Patcher(self._patch, self._scale_regressor, min_patch_area=min_patch_area, name='Patcher')
         self.cur_step = None
         self.tb = None
         self._trainable_variables = [self._scale_regressor, self._patch]
@@ -133,14 +132,13 @@ class DynamicPatchAttacker(tf.keras.Model):
             images = self._patcher([boxes, images])
             boxes_pred, scores_pred, classes = self.second_pass(images)
             sc_losses = tf.reduce_sum(scores_pred ** 2., axis=1)
-            max_score = tf.reduce_max(scores_pred, axis=1)
-            # patch_loss = tf.reduce_mean(1. - tf.reduce_mean(self._patch.value() ** 2., axis=2))
-            loss = tf.reduce_sum(sc_losses + (max_score - self._scale_regressor) ** 2.)  # + patch_loss
+            scale_losses = tf.reduce_max((scores_pred - self._scale_regressor) ** 2., axis=1)
+            loss = tf.reduce_sum(sc_losses + scale_losses)
 
-        self.add_loss(loss)
-        self.add_loss(self._scale_regressor.value())
-        self.add_loss(tf.reduce_sum(max_score))
-        # self.add_loss(patch_loss)
+        self.add_metric(loss, name='loss')
+        self.add_metric(self._scale_regressor.value(), name='scale')
+        self.add_metric(tf.reduce_sum(scale_losses), name='scale_loss')
+        self.add_metric(tf.reduce_mean(tf.reduce_max(scores_pred, axis=1)), name='mean_max_score')
 
         boxes_pred, scores_pred = self._postprocessing(boxes_pred, scores_pred, classes)
         self.add_metric(self.calc_asr(scores, scores_pred, boxes, boxes_pred), name='asr')
@@ -176,8 +174,7 @@ class DynamicPatchAttacker(tf.keras.Model):
         tr = 'train' if training else 'val'
         with self.tb._writers[tr].as_default():
             if training:
-                patch = util.cmyk_to_rgb(self._patch)
-                patch = tf.clip_by_value(patch, 0., 255.)
+                patch = tf.clip_by_value(self._patch * self.config.stddev_rgb + self.config.mean_rgb, 0., 255.)
                 patch = tf.cast(patch, tf.uint8)
                 tf.summary.image('Patch', patch[tf.newaxis], step=self.cur_step)
 
@@ -208,51 +205,46 @@ class DynamicPatchAttacker(tf.keras.Model):
         self.cur_step = self.tb._train_step
         grads = self(inputs)
         self.optimizer.apply_gradients([*zip(grads, self._trainable_variables)])
-        return self.update_metrics()
+        return {m.name: m.result() for m in self.metrics}
 
     def test_step(self, inputs):
         self.cur_step = self.tb._val_step
         self(inputs, training=False)
-        return self.update_metrics()
-
-    def update_metrics(self):
-        ret = {'loss': self.losses[0], 'scale_loss': self.losses[1], 'score_loss': self.losses[2],
-               # 'patch_loss': self.losses[3]
-               }
-        ret.update({m.name: m.result() for m in self.metrics})
-        return ret
+        return {m.name: m.result() for m in self.metrics}
 
     def save_weights(self, dirpath, **kwargs):
         os.makedirs(dirpath)
         with open(os.path.join(dirpath, 'scale.txt'), 'w') as f:
             f.write(str(self._scale_regressor.numpy()))
-        patch = util.cmyk_to_rgb(self._patch)
-        patch = tf.clip_by_value(patch, 0., 255.)
+
+        patch = tf.clip_by_value(self._patch * self.config.stddev_rgb + self.config.mean_rgb, 0., 255.)
         patch = tf.cast(patch, tf.uint8).numpy()
         plt.imsave(os.path.join(dirpath, 'patch.png'), patch)
         tifffile.imwrite(os.path.join(dirpath, 'patch.tiff'), self._patch.numpy())
 
 
 class Patcher(tf.keras.layers.Layer):
-    def __init__(self, patch: tf.keras.Model, config, scale_regressor, *args, aspect=1.,
-                 origin=(.5, .5), min_patch_area=60, **kwargs):
+    def __init__(self, patch: tf.keras.Model, scale_regressor, *args, min_patch_area=60, **kwargs):
         super().__init__(*args, trainable=False, **kwargs)
         self._patch = patch
-        self.config = config
         self._batch_counter = tf.Variable(tf.constant(0), trainable=False)
         self._patch_counter = tf.Variable(tf.constant(0), trainable=False)
         self._boxes = None
-        self.aspect = aspect
-        self.origin = origin
         self.min_patch_area = min_patch_area
-        self._matcher = histogram_matcher.HistogramMatcher(name='Hist_Matcher')
+        self._matcher = histogram_matcher.BrightnessMatcher(name='Brightness_Matcher')
         self._scale = scale_regressor
-        self._patch_rgb = None
+
+    def random_print_adjust(self):
+        w = tf.random.normal((1, 1, 3), .9, .01)
+        b = tf.random.normal((1, 1, 3), -0.1, .01)
+        return tf.clip_by_value(w * self._patch + b, -1., 1.)
 
     def add_patches_to_image(self, image):
         h, w, _ = tf.unstack(tf.cast(tf.shape(image), tf.float32))
         boxes = self._boxes[self._batch_counter]
-        patch = self._matcher((self._patch_rgb, image))
+        # printer random color variation
+        patch = self.random_print_adjust()
+        patch = self._matcher((patch, image))
 
         patch_boxes = tf.vectorized_map(functools.partial(self.create, image), boxes)
         patch_boxes = tf.reshape(patch_boxes, shape=(-1, 4))
@@ -274,8 +266,7 @@ class Patcher(tf.keras.layers.Layer):
         xmax = xmin_patch + patch_w
         idx = tf.stack(tf.meshgrid(tf.range(ymin_patch, ymax), tf.range(xmin_patch, xmax), indexing='ij'), axis=-1)
 
-        im = tf.image.resize(patch, tf.stack([patch_h, patch_w]))
-        # im = tf.image.grayscale_to_rgb(im)
+        im = tf.image.resize(patch, tf.stack([patch_h, patch_w]), antialias=True)
         im += tf.random.uniform(shape=tf.shape(im), minval=-.01, maxval=.01)
         im = tf.image.random_brightness(im, .3)
         im = tf.clip_by_value(im, -1., 1.)
@@ -291,10 +282,11 @@ class Patcher(tf.keras.layers.Layer):
         w = xmax - xmin
 
         area = h * w
+        tolerance = .2
 
         patch_size = tf.floor(tf.sqrt(area * self._scale))
-        orig_y = ymin + h / 2.
-        orig_x = xmin + w / 2.
+        orig_y = ymin + h / 2. + tf.random.uniform((), minval=-tolerance * h / 2., maxval= tolerance * h / 2.)
+        orig_x = xmin + w / 2. + tf.random.uniform((), minval=-tolerance * w / 2., maxval= tolerance * w / 2.)
 
         patch_w = patch_size
         patch_h = patch_size
@@ -312,9 +304,6 @@ class Patcher(tf.keras.layers.Layer):
 
     def call(self, inputs):
         self._boxes, images = inputs
-        self._patch_rgb = util.cmyk_to_rgb(self._patch)
-        self._patch_rgb -= self.config.mean_rgb
-        self._patch_rgb /= self.config.stddev_rgb
         self._batch_counter.assign(tf.constant(0))
         return tf.map_fn(self.add_patches_to_image, images)
 

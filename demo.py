@@ -96,10 +96,10 @@ def main(input_file=None, save_file=None, live=False):
     stream = streaming.Stream(filename=input_file)
     dct = detector.Detector(download_model=False)
 
-    with open('save_dir/patch_90_5.4684/scale.txt') as f:
+    with open('save_dir/patch_20_0.6912/scale.txt') as f:
         scale = ast.literal_eval(f.read())
 
-    patch = adv_patch.AdversarialPatch(scale=scale, patch_file='save_dir/patch_90_5.4684/patch.png')
+    patch = adv_patch.AdversarialPatch(scale=scale, patch_file='save_dir/patch_20_0.6912/patch.png')
 
     rand_patch = adv_patch.AdversarialPatch(scale=scale)
 
@@ -157,7 +157,7 @@ def main(input_file=None, save_file=None, live=False):
 
 
 if __name__ == '__main__':
-    main(input_file='production ID 5052418.mp4',  # change to a mp4 file or None for webcam stream
-         save_file='out11.mp4',  # change to a mp4 file or None for no save
+    main(input_file=None,  # change to a mp4 file or None for webcam stream
+         save_file=None,  # change to a mp4 file or None for no save
          live=True  # True if wish to see live stream
          )

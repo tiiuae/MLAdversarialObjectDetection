@@ -61,8 +61,7 @@ class AdversarialPatch:
         img = img.copy()
         for bbox in bboxes:
             ymin_patch, xmin_patch, patch_h, patch_w = self._create(img, bbox)
-            patch_bg = img[ymin_patch: ymin_patch + patch_h, xmin_patch: xmin_patch + patch_w]
-            patch = self.hist_match(patch_bg)
+            patch = self.hist_match(img)
             patch = cv2.resize(patch, (patch_w, patch_h))
 
             img[ymin_patch: ymin_patch + patch_h, xmin_patch: xmin_patch + patch_w] = patch
