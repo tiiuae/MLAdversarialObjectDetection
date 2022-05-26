@@ -9,7 +9,6 @@ import math
 
 import cv2
 import numpy as np
-import skimage
 from PIL import Image
 
 
@@ -21,6 +20,26 @@ class AdversarialPatch:
         else:
             self._patch_img = (np.random.rand(h, w, 3) * 255).astype('uint8')
         self.scale = scale
+        self._printed = False
+        self.mean_rgb = 127.
+        self.stddev_rgb = 128.
+        self._patch_img = self.print_patch()
+
+    def print_patch(self):
+        if self._printed:
+            return self._patch_img
+
+        patch = self._patch_img - self.mean_rgb
+        patch /= self.stddev_rgb
+
+        w = np.random.normal(.9, .01, size=(1, 1, 3))
+        b = np.random.normal(-0.1, .01, size=(1, 1, 3))
+        patch = w * patch + b
+
+        patch *= self.stddev_rgb
+        patch += self.mean_rgb
+        self._printed = True
+        return np.clip(patch, 0, 255).astype('uint8')
 
     def _create(self, img, bbox):
         ymin, xmin, ymax, xmax = bbox
@@ -46,24 +65,43 @@ class AdversarialPatch:
 
         return list(map(int, (ymin_patch, xmin_patch, patch_h, patch_w)))
 
-    def hist_match(self, tgt):
+    def brightness_match(self, tgt):
         tgt = cv2.cvtColor(tgt, cv2.COLOR_RGB2YUV)
         src = cv2.cvtColor(self._patch_img, cv2.COLOR_RGB2YUV)
 
         source, target = src[:, :, 0], tgt[:, :, 0]
-        res = skimage.exposure.match_histograms(source, target)
+        source_mean = np.mean(source)
+        target_mean = np.mean(target)
+        res = np.clip(source - source_mean + target_mean, 0., 255.)
 
-        src[:, :, 0] = res
+        src[:, :, 0] = res.astype('uint8')
         res = cv2.cvtColor(src, cv2.COLOR_YUV2RGB)
         return res
+
+    def random_brightness(self, tgt, delta):
+        delta = np.random.uniform(-delta, delta)
+        return np.clip(tgt + delta, -1., 1.)
+
+    def random_noise(self, tgt, delta):
+        delta = np.random.uniform(low=-delta, high=delta, size=tgt.shape)
+        return np.clip(tgt + delta, -1., 1.)
+
+    def get_transformed_patch(self, img, patch_h, patch_w):
+        patch = self.brightness_match(img)
+        patch = cv2.resize(patch, (patch_w, patch_h), interpolation=cv2.INTER_AREA)
+        patch = patch - self.mean_rgb
+        patch /= self.stddev_rgb
+        patch = self.random_noise(patch, .01)
+        patch = self.random_brightness(patch, .3)
+        patch *= self.stddev_rgb
+        patch += self.mean_rgb
+        return np.clip(patch, 0., 255.).astype('uint8')
 
     def add_adv_to_img(self, img: np.ndarray, bboxes):
         img = img.copy()
         for bbox in bboxes:
             ymin_patch, xmin_patch, patch_h, patch_w = self._create(img, bbox)
-            patch = self.hist_match(img)
-            patch = cv2.resize(patch, (patch_w, patch_h))
-
+            patch = self.get_transformed_patch(img, patch_h, patch_w)
             img[ymin_patch: ymin_patch + patch_h, xmin_patch: xmin_patch + patch_w] = patch
         return img
 

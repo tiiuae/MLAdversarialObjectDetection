@@ -5,8 +5,6 @@ Created: March 28, 2022
 
 Purpose: detection module
 """
-import logging
-
 import cv2
 import numpy as np
 import tensorflow as tf
@@ -45,23 +43,38 @@ class Detector:
                 sc.append(scores[i])
                 n_boxes += 1
 
+        logger.debug(f'{bb}, {sc}')
         return bb, sc
+
+    def __call__(self, frame, score_thresh=.5):
+        bb, sc = self.infer(frame)
+        bb, sc = util.filter_by_thresh(bb, sc, .5)
+        frame = util.draw_boxes(frame, bb, sc)
+        return frame
 
 
 def main():
-    detector = Detector(download_model=False)
+    import argparse
 
-    # noinspection PyShadowingNames
-    logger = util.get_logger(__name__, logging.DEBUG)
+    parser = argparse.ArgumentParser(description='detector interface')
+    parser.add_argument('--download', dest='download', action='store_true', help='download model')
+    parser.add_argument('--no-download', dest='download', action='store_false', help='dont download model (default)')
+    parser.add_argument('--filename', dest='filename',
+                        help='optional video filename (will use webcam feed if this option is absent)', default=None)
+    parser.set_defaults(download=False)
+
+    args = parser.parse_args()
+    detector = Detector(download_model=args.download)
 
     from streaming import Stream
-    stream = Stream()
+    stream = Stream(args.filename)
     for frame in stream.play():
-        bb, sc = detector.infer(frame)
-        bb, sc = util.filter_by_thresh(bb, sc, .5)
-        frame = util.draw_boxes(frame, bb, sc)
-        logger.debug(f'{bb}, {sc}')
+        frame = detector(frame)
+
+        # show frame
+        frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
         cv2.imshow('Frame', frame.astype(np.uint8))
+
         # Press Q on keyboard to  exit
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
