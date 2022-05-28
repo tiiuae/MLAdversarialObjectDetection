@@ -77,13 +77,14 @@ def ensure_empty_dir(dirname):
 def draw_boxes(frame, bb, sc):
     for box, score in zip(bb, sc):
         ymin, xmin, ymax, xmax = box
+        color = 'green' if score >= .7 else 'yellow' if score >= .6 else 'red'
         draw_bounding_box_on_image_array(
             frame,
             ymin,
             xmin,
             ymax,
             xmax,
-            color='green',
+            color=color,
             thickness=1,
             display_str_list=[f'person: {int(100 * score)}%'], use_normalized_coordinates=False)
 

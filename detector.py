@@ -48,7 +48,7 @@ class Detector:
 
     def __call__(self, frame, score_thresh=.5):
         bb, sc = self.infer(frame)
-        bb, sc = util.filter_by_thresh(bb, sc, .5)
+        bb, sc = util.filter_by_thresh(bb, sc, score_thresh)
         frame = util.draw_boxes(frame, bb, sc)
         return frame
 

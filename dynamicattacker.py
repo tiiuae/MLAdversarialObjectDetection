@@ -85,9 +85,9 @@ class DynamicPatchAttacker(tf.keras.Model):
             scores = tf.ragged.boolean_mask(scores, valid_boxes)
         return boxes, scores
 
-    def second_pass(self, images):
+    def second_pass(self, images, training=True):
         with tf.name_scope('attack_pass'):
-            cls_outputs, box_outputs = self.model(images, pre_mode=None, post_mode=None)
+            cls_outputs, box_outputs = self.model(images, pre_mode=None, post_mode=None, training=training)
             cls_outputs = postprocess.to_list(cls_outputs)
             box_outputs = postprocess.to_list(box_outputs)
             boxes, scores, classes = postprocess.pre_nms(self.config.as_dict(), cls_outputs, box_outputs)
@@ -130,7 +130,7 @@ class DynamicPatchAttacker(tf.keras.Model):
 
         with tf.GradientTape() as tape:
             images = self._patcher([boxes, images])
-            boxes_pred, scores_pred, classes = self.second_pass(images)
+            boxes_pred, scores_pred, classes = self.second_pass(images, training=training)
             sc_losses = tf.reduce_sum(scores_pred ** 2., axis=1)
             scale_losses = tf.reduce_max((scores_pred - self._scale_regressor) ** 2., axis=1)
             loss = tf.reduce_sum(sc_losses + scale_losses)

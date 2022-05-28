@@ -157,7 +157,7 @@ def main(input_file=None, save_file=None, live=False):
 
 
 if __name__ == '__main__':
-    main(input_file='production ID 5052418.mp4',  # change to a mp4 file or None for webcam stream
-         save_file='out14.mp4',  # change to a mp4 file or None for no save
-         live=True  # True if wish to see live streamq
+    main(input_file='pexels-roman-odintsov-6398327.mp4',  # change to a mp4 file or None for webcam stream
+         save_file='out13.mp4',  # change to a mp4 file or None for no save
+         live=False  # True if wish to see live streamq
          )

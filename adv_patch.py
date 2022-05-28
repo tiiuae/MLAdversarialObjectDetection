@@ -39,7 +39,7 @@ class AdversarialPatch:
         patch *= self.stddev_rgb
         patch += self.mean_rgb
         self._printed = True
-        return np.clip(patch, 0, 255).astype('uint8')
+        return np.clip(patch, 0., 255.).astype('uint8')
 
     def _create(self, img, bbox):
         ymin, xmin, ymax, xmax = bbox
