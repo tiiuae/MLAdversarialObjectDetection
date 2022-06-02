@@ -21,7 +21,7 @@ import histogram_matcher
 import metrics
 import train_data_generator
 import util
-from tf2 import postprocess, efficientdet_keras, infer_lib
+from tf2 import postprocess, efficientdet_keras
 
 logger = util.get_logger(__name__)
 MODEL = 'efficientdet-lite4'
@@ -306,16 +306,6 @@ class Patcher(tf.keras.layers.Layer):
         self._boxes, images = inputs
         self._batch_counter.assign(tf.constant(0))
         return tf.map_fn(self.add_patches_to_image, images)
-
-
-def get_victim_model(download_model=False):
-    if download_model:
-        # Download checkpoint.
-        util.download(MODEL)
-
-    logger.info(f'Using model in {MODEL}')
-    driver = infer_lib.KerasDriver(MODEL, debug=False, model_name=MODEL)
-    return driver.model
 
 
 def main(download_model=False):

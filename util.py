@@ -15,6 +15,8 @@ import requests
 import shapely.geometry
 import tensorflow as tf
 
+from tf2 import infer_lib
+
 from visualize.vis_utils import draw_bounding_box_on_image_array
 
 
@@ -149,3 +151,11 @@ def cmyk_to_rgb(patch):
     g = 255. * (1. - m) * key
     b = 255. * (1. - y) * key
     return tf.stack([r, g, b], axis=2)
+
+
+def get_victim_model(model, download_model=False):
+    if download_model:
+        # Download checkpoint.
+        download(model)
+    driver = infer_lib.KerasDriver(model, debug=False, model_name=model)
+    return driver.model

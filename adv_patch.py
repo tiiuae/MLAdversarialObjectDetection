@@ -92,7 +92,7 @@ class AdversarialPatch:
         patch = patch - self.mean_rgb
         patch /= self.stddev_rgb
         patch = self.random_noise(patch, .01)
-        patch = self.random_brightness(patch, .3)
+        # patch = self.random_brightness(patch, .3)
         patch *= self.stddev_rgb
         patch += self.mean_rgb
         return np.clip(patch, 0., 255.).astype('uint8')

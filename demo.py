@@ -15,6 +15,7 @@ import numpy as np
 
 import adv_patch
 import detector
+import generator
 import streaming
 import util
 
@@ -69,6 +70,35 @@ class AttackDemo(Demo):
         return mal_frame
 
 
+class RecoveryDemo(Demo):
+    def __init__(self, weights_file, patch: adv_patch.AdversarialPatch, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.patch_obj = patch
+        self.config = self.dct_obj.driver.model.config
+        self._antipatch = generator.define_generator(self.config.image_size)
+        self._antipatch.load_weights(weights_file)
+
+    def run(self, frame, bb):
+        mal_frame = self.patch_obj.add_adv_to_img(frame, bb)
+        noise = self.serve(mal_frame[np.newaxis])
+        mal_frame = np.clip(mal_frame + noise, 0., 255.).astype('uint8')
+        mal_frame, _, _ = super().run(mal_frame)
+        return mal_frame
+
+    def serve(self, image_array):
+        _, h, w, _ = image_array.shape
+        image_array, scale = self.dct_obj.driver._preprocess(image_array)
+        outputs = self._antipatch.predict(image_array)
+        outputs *= self.config.stddev_rgb
+        outputs += self.config.mean_rgb
+        output = outputs[0]
+        oh, ow, _ = output.shape
+        dsize = int(ow * scale), int(oh * scale)
+        output = cv2.resize(output, dsize)
+        output = output[:h, :w]
+        return output
+
+
 def make_info_frame(info_frame):
     title_pos_h, title_pos_w = 0, 10
 
@@ -94,18 +124,22 @@ def make_info_frame(info_frame):
 
 def main(input_file=None, save_file=None, live=False):
     stream = streaming.Stream(filename=input_file)
-    dct = detector.Detector(download_model=False)
 
-    with open('save_dir/patch_100_0.7025/scale.txt') as f:
+    config_override = {'nms_configs': {'iou_thresh': .5, 'score_thresh': .3},
+                       'image_size': 480}
+    dct = detector.Detector(params=config_override, download_model=False)
+
+    with open('save_dir_rand_print_dropout/patch_100_0.6910/scale.txt') as f:
         scale = ast.literal_eval(f.read())
 
-    patch = adv_patch.AdversarialPatch(scale=scale, patch_file='save_dir/patch_100_0.7025/patch.png')
+    patch = adv_patch.AdversarialPatch(scale=scale, patch_file='save_dir_rand_print_dropout/patch_100_0.6910/patch.png')
 
     rand_patch = adv_patch.AdversarialPatch(scale=scale)
 
     demo_clean = Demo('clean', dct)
     demo_patch = AttackDemo(patch, 'adv. patch', dct)
     demo_rnd_patch = AttackDemo(rand_patch, 'random patch (as baseline)', dct)
+    demo_recovery = RecoveryDemo('save_dir/patch_35_0.5278/antipatch.h5', patch, 'recovery', dct)
 
     player = stream.play()
     frame = next(player)
@@ -130,16 +164,18 @@ def main(input_file=None, save_file=None, live=False):
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         out = cv2.VideoWriter(save_file, fourcc, 8.0, output_size)
 
+    # info_frame = make_info_frame(np.zeros_like(frame))
+
     try:
         for frame in player:
             ann_frame, bb, sc = demo_clean.run(frame.copy())
             mal_frame = demo_patch.run(frame.copy(), bb)
-            ctrl_frame = demo_rnd_patch.run(frame, bb)
+            ctrl_frame = demo_rnd_patch.run(frame.copy(), bb)
 
             # frame = np.concatenate([ann_frame, mal_frame, ctrl_frame], axis=1)
             frame_top = np.concatenate([ann_frame, mal_frame], axis=1)
-            info_frame = make_info_frame(np.zeros_like(ctrl_frame))
-            frame_bottom = np.concatenate([ctrl_frame, info_frame], axis=1)
+            dct_frame = demo_recovery.run(frame, bb)
+            frame_bottom = np.concatenate([ctrl_frame, dct_frame], axis=1)
             frame = np.concatenate([frame_top, frame_bottom])
             frame = cv2.resize(frame, output_size)
 
@@ -157,7 +193,7 @@ def main(input_file=None, save_file=None, live=False):
 
 
 if __name__ == '__main__':
-    main(input_file='pexels-roman-odintsov-6398327.mp4',  # change to a mp4 file or None for webcam stream
-         save_file='out13.mp4',  # change to a mp4 file or None for no save
-         live=False  # True if wish to see live streamq
+    main(input_file='pexels-ezmari-nabizadeh-10240851.mp4',  # change to a mp4 file or None for webcam stream
+         save_file=None,  # change to a mp4 file or None for no save
+         live=True  # True if wish to see live streamq
          )
