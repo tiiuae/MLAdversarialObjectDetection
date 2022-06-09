@@ -15,7 +15,7 @@ import utils
 
 
 class NoiseGenerator(Model):
-    def __init__(self, *args, n_filters=8, dropout=.05, batchnorm=True, **kwargs):
+    def __init__(self, *args, n_filters=8, dropout=.1, batchnorm=True, **kwargs):
         super().__init__(*args, **kwargs, name='generator')
         self.conv_blocks = [Conv2DBlock(name=f'conv{i}', n_filters=n_filters * (2 ** i), batchnorm=batchnorm,
                                         dropout=dropout)
@@ -30,7 +30,7 @@ class NoiseGenerator(Model):
                                                            batchnorm=batchnorm, dropout=dropout))
             m /= 2
 
-        self.op = Conv2D(1, (1, 1), activation='tanh', name='output', kernel_initializer='he_normal')
+        self.op = Conv2D(3, (1, 1), activation='tanh', name='output', kernel_initializer='he_normal')
 
     def call(self, inputs, training=False):
         x = inputs

@@ -45,9 +45,9 @@ class Detector:
         logger.debug(f'{bb}, {sc}')
         return bb, sc
 
-    def __call__(self, frame, score_thresh=.5):
+    def __call__(self, frame):
         bb, sc = self.infer(frame)
-        bb, sc = util.filter_by_thresh(bb, sc, score_thresh)
+        bb, sc = util.filter_by_thresh(bb, sc, self.driver.model.config.nms_configs.score_thresh)
         frame = util.draw_boxes(frame, bb, sc)
         return frame
 
@@ -63,7 +63,9 @@ def main():
     parser.set_defaults(download=False)
 
     args = parser.parse_args()
-    detector = Detector(download_model=args.download)
+    config_override = {'nms_configs': {'iou_thresh': .5, 'score_thresh': .5},
+                       'image_size': 480}
+    detector = Detector(params=config_override, download_model=args.download)
 
     from streaming import Stream
     stream = Stream(args.filename)

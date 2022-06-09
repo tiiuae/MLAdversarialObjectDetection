@@ -125,7 +125,7 @@ def make_info_frame(info_frame):
 def main(input_file=None, save_file=None, live=False):
     stream = streaming.Stream(filename=input_file)
 
-    config_override = {'nms_configs': {'iou_thresh': .5, 'score_thresh': .3},
+    config_override = {'nms_configs': {'iou_thresh': .5, 'score_thresh': .5},
                        'image_size': 480}
     dct = detector.Detector(params=config_override, download_model=False)
 

@@ -159,3 +159,45 @@ def get_victim_model(model, download_model=False):
         download(model)
     driver = infer_lib.KerasDriver(model, debug=False, model_name=model)
     return driver.model
+
+
+def diou_loss(b1, b1_area, b1_height, b1_width, b2):
+        zero = 0.
+        # shape = tf.maximum(b1.bounding_shape(), b2.bounding_shape())
+        # b1 = b1.to_tensor()
+        # b2 = b2.to_tensor()
+        b1_ymin, b1_xmin, b1_ymax, b1_xmax = tf.unstack(b1, 4, axis=-1)
+        b2_ymin, b2_xmin, b2_ymax, b2_xmax = tf.unstack(b2, 4, axis=-1)
+        # b1_width = tf.maximum(zero, b1_xmax - b1_xmin)
+        # b1_height = tf.maximum(zero, b1_ymax - b1_ymin)
+        b2_width = tf.maximum(zero, b2_xmax - b2_xmin)
+        b2_height = tf.maximum(zero, b2_ymax - b2_ymin)
+        # b1_area = b1_width * b1_height
+        b2_area = b2_width * b2_height
+
+        intersect_ymin = tf.maximum(b1_ymin, b2_ymin)
+        intersect_xmin = tf.maximum(b1_xmin, b2_xmin)
+        intersect_ymax = tf.minimum(b1_ymax, b2_ymax)
+        intersect_xmax = tf.minimum(b1_xmax, b2_xmax)
+        intersect_width = tf.maximum(zero, intersect_xmax - intersect_xmin)
+        intersect_height = tf.maximum(zero, intersect_ymax - intersect_ymin)
+        intersect_area = intersect_width * intersect_height
+
+        union_area = b1_area + b2_area - intersect_area
+        iou = tf.math.divide_no_nan(intersect_area, union_area)
+
+        b1_centre_xy = tf.stack([b1_ymin + b1_height, b1_xmin + b1_width], axis=-1)
+        b2_centre_xy = tf.stack([b2_ymin + b2_height, b2_xmin + b2_width], axis=-1)
+        center_dist = tf.reduce_sum((b1_centre_xy - b2_centre_xy) ** 2., axis=-1)
+
+        enclose_ymin = tf.minimum(b1_ymin, b2_ymin)
+        enclose_xmin = tf.minimum(b1_xmin, b2_xmin)
+        enclose_ymax = tf.maximum(b1_ymax, b2_ymax)
+        enclose_xmax = tf.maximum(b1_xmax, b2_xmax)
+        enclose_width = tf.maximum(zero, enclose_xmax - enclose_xmin)
+        enclose_height = tf.maximum(zero, enclose_ymax - enclose_ymin)
+        enclose_diag = tf.reduce_sum(tf.stack([enclose_height, enclose_width], axis=-1) ** 2., axis=-1)
+        diou = iou - tf.math.divide_no_nan(center_dist, enclose_diag)
+        # enclose_area = enclose_width * enclose_height
+        # giou = iou - tf.math.divide_no_nan((enclose_area - union_area), enclose_area)
+        return 1. - diou
