@@ -56,7 +56,7 @@ class PatchAttackDefender(tf.keras.Model):
         self.cur_step = None
         self.tb = None
         self._trainable_variables = self._antipatch.trainable_variables
-        self.diou_loss = regression_loss.DIOULoss()
+        self.diou_loss = regression_loss.InverseDIOULoss()
 
     def compile(self, *args, **kwargs):
         super().compile(*args, **kwargs)

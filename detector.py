@@ -18,12 +18,12 @@ logger = util.get_logger(__name__)
 
 class Detector:
     """Inference with efficientDet object detector"""
-    def __init__(self, *, params, download_model=False):
+    def __init__(self, *, params, download_model=False, **kwargs):
         if download_model:
             # Download checkpoint.
             util.download(MODEL)
             logger.info(f'Using model in {MODEL}')
-        self.driver = infer_lib.KerasDriver(MODEL, debug=False, model_name=MODEL, model_params=params)
+        self.driver = infer_lib.KerasDriver(MODEL, debug=False, model_name=MODEL, model_params=params, **kwargs)
 
     def infer(self, frame, max_boxes=200):
         raw_frames = np.array([frame])

@@ -14,7 +14,7 @@ from PIL import Image
 
 class AdversarialPatch:
 
-    def __init__(self, *, scale, h=512, w=512, patch_file=None):
+    def __init__(self, *, scale, h=480, w=480, patch_file=None):
         if patch_file is not None:
             self._patch_img = np.asarray(Image.open(patch_file).convert('RGB'))
         else:
@@ -24,6 +24,7 @@ class AdversarialPatch:
         self.mean_rgb = 127.
         self.stddev_rgb = 128.
         self._patch_img = self.print_patch()
+        self.output_size = h, w
 
     def print_patch(self):
         if self._printed:
@@ -32,8 +33,8 @@ class AdversarialPatch:
         patch = self._patch_img - self.mean_rgb
         patch /= self.stddev_rgb
 
-        w = np.random.normal(.9, .01, size=(1, 1, 3))
-        b = np.random.normal(-0.1, .01, size=(1, 1, 3))
+        w = np.random.normal(.7, .01, size=(1, 1, 3))
+        b = np.random.normal(-0.3, .01, size=(1, 1, 3))
         patch = w * patch + b
 
         patch *= self.stddev_rgb
@@ -65,13 +66,28 @@ class AdversarialPatch:
 
         return list(map(int, (ymin_patch, xmin_patch, patch_h, patch_w)))
 
+    def add_gray(self, image):
+        h, w, c = image.shape
+        image_scale_y = self.output_size[0] / h
+        image_scale_x = self.output_size[1] / w
+        image_scale = min(image_scale_x, image_scale_y)
+        scaled_height = int(h * image_scale)
+        scaled_width = int(w * image_scale)
+
+        scaled_image = cv2.resize(image, [scaled_width, scaled_height])
+        output_image = 127 + np.zeros((*self.output_size, c), dtype='uint8')
+        output_image[:scaled_height, :scaled_width, :] = scaled_image
+        return output_image
+
     def brightness_match(self, tgt):
+        tgt = self.add_gray(tgt)
         tgt = cv2.cvtColor(tgt, cv2.COLOR_RGB2YUV)
         src = cv2.cvtColor(self._patch_img, cv2.COLOR_RGB2YUV)
 
         source, target = src[:, :, 0], tgt[:, :, 0]
         source_mean = np.mean(source)
         target_mean = np.mean(target)
+        print(source_mean, target_mean)
         res = np.clip(source - source_mean + target_mean, 0., 255.)
 
         src[:, :, 0] = res.astype('uint8')

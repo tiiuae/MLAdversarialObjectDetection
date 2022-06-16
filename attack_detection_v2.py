@@ -10,12 +10,10 @@ import functools
 import logging
 import os
 
-import numpy as np
 import pandas as pd
 import seaborn as sns
 import tensorflow as tf
 import tfplot
-from matplotlib import pyplot as plt
 from tifffile import tifffile
 
 import custom_callbacks
@@ -61,7 +59,6 @@ class PatchAttackDefender(tf.keras.Model):
         self.cur_step = None
         self.tb = None
         self._trainable_variables = self._antipatch.trainable_variables
-        self.diou_loss = regression_loss.DIOULoss()
 
     def compile(self, *args, **kwargs):
         super().compile(*args, **kwargs)
@@ -73,7 +70,8 @@ class PatchAttackDefender(tf.keras.Model):
         boxes_w = boxes[:, :, 3] - boxes[:, :, 1]
         boxes_area = boxes_h * boxes_w
         cond1 = tf.logical_and(tf.less_equal(boxes_w / w, 1.), tf.less_equal(boxes_h / h, 1.))
-        cond2 = tf.logical_and(tf.greater(boxes_area, tf.constant(100.)), tf.greater_equal(scores, tf.constant(.5)))
+        cond2 = tf.logical_and(tf.greater(boxes_area, tf.constant(100.)),
+                               tf.greater_equal(scores, self.configs.nms_config.score_thresh))
         return tf.logical_and(cond1, cond2)
 
     def first_pass(self, images, score_thresh=None):

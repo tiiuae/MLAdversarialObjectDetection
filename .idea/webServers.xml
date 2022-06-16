@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="WebServers">
+    <option name="servers">
+      <webServer id="097b065a-35ba-4724-a21b-2eb2f1ba59c2" name="mluser">
+        <fileTransfer rootFolder="/home/mluser/saurabh/phyadv" accessType="SFTP" host="172.31.107.251" port="22" sshConfigId="db7aa265-d5d1-4267-8b4a-b88654dbb41f" sshConfig="mluser@172.31.107.251:22 password">
+          <advancedOptions>
+            <advancedOptions dataProtectionLevel="Private" keepAliveTimeout="0" passiveMode="true" shareSSLContext="true" />
+          </advancedOptions>
+        </fileTransfer>
+      </webServer>
+    </option>
+  </component>
+</project>

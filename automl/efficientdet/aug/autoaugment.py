@@ -862,7 +862,7 @@ def rotate_with_bboxes(image, bboxes, degrees, replace):
   wrapped_rotate_bbox = lambda bbox: _rotate_bbox(
       bbox, image_height, image_width, degrees)
   # pylint:enable=g-long-lambda
-  bboxes = tf.map_fn(wrapped_rotate_bbox, bboxes)
+  bboxes = tf.numpy_preprocess(wrapped_rotate_bbox, bboxes)
   return image, bboxes
 
 
@@ -949,7 +949,7 @@ def translate_bbox(image, bboxes, pixels, replace, shift_horizontal):
   wrapped_shift_bbox = lambda bbox: _shift_bbox(
       bbox, image_height, image_width, pixels, shift_horizontal)
   # pylint:enable=g-long-lambda
-  bboxes = tf.map_fn(wrapped_shift_bbox, bboxes)
+  bboxes = tf.numpy_preprocess(wrapped_shift_bbox, bboxes)
   return image, bboxes
 
 
@@ -1056,7 +1056,7 @@ def shear_with_bboxes(image, bboxes, level, replace, shear_horizontal):
   wrapped_shear_bbox = lambda bbox: _shear_bbox(
       bbox, image_height, image_width, level, shear_horizontal)
   # pylint:enable=g-long-lambda
-  bboxes = tf.map_fn(wrapped_shear_bbox, bboxes)
+  bboxes = tf.numpy_preprocess(wrapped_shear_bbox, bboxes)
   return image, bboxes
 
 

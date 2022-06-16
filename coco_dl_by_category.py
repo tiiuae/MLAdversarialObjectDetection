@@ -32,7 +32,7 @@ async def get_image(session, im_def, filename):
 
 async def main():
     """Download instances_train2017.json from the COCO website and put in the same directory as this script"""
-    coco = COCO('instances_train2017.json')
+    coco = COCO('instances_val2017.json')
     # cats = coco.loadCats(coco.getCatIds())
     # nms = [cat['name'] for cat in cats]
     # print('COCO categories: \n{}\n'.format(' '.join(nms)))
@@ -42,24 +42,26 @@ async def main():
     cat_ids = coco.getCatIds(catNms=[cat])
     img_ids = coco.getImgIds(catIds=cat_ids)
     images = coco.loadImgs(img_ids)
+    download_dir = 'downloaded_images_val'
+    labels_dir = 'labels_val'
 
-    os.makedirs('downloaded_images', exist_ok=True)
-    os.makedirs('labels', exist_ok=True)
+    os.makedirs(download_dir, exist_ok=True)
+    os.makedirs(labels_dir, exist_ok=True)
 
     # Comment this entire section out if you don't want to download the images
-    filenames = [os.path.join('downloaded_images', im['file_name']) for im in images]
+    filenames = [os.path.join(download_dir, im['file_name']) for im in images]
     dl_images = [im for im, filename in zip(images, filenames)
                  if not os.path.isfile(filename) or not os.path.getsize(filename)]
     print('will download', len(dl_images), 'images')
     async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(limit=50)) as session:
-        await asyncio.gather(*[get_image(session, im, os.path.join('downloaded_images', im['file_name']))
+        await asyncio.gather(*[get_image(session, im, os.path.join(download_dir, im['file_name']))
                                for im in dl_images])
 
     for im in images:
         ann_ids = coco.getAnnIds(imgIds=im['id'], catIds=cat_ids, iscrowd=None)
         anns = coco.loadAnns(ann_ids)
 
-        filename = os.path.join('labels', im['file_name'].replace(".jpg", ".txt"))
+        filename = os.path.join(labels_dir, im['file_name'].replace(".jpg", ".txt"))
         if os.path.isfile(filename):
             continue
 

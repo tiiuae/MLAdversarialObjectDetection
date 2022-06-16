@@ -500,7 +500,7 @@ def draw_bounding_boxes_on_image_tensors(images,
                                       tf.uint8)
         return image_with_boxes
 
-    images = tf.map_fn(draw_boxes, elems, dtype=tf.uint8, back_prop=False)
+    images = tf.numpy_preprocess(draw_boxes, elems, dtype=tf.uint8, back_prop=False)
     return images
 
 

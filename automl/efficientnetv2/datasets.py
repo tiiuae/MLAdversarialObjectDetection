@@ -62,7 +62,7 @@ def build_image_serving_input_fn(image_size, batch_size=None):
         shape=[batch_size],
         dtype=tf.string,
     )
-    images = tf.map_fn(
+    images = tf.numpy_preprocess(
         _preprocess_image, image_bytes_list, back_prop=False, dtype=tf.float32)
     return tf.estimator.export.ServingInputReceiver(
         images, {'image_bytes': image_bytes_list})

@@ -224,7 +224,7 @@ def static_or_dynamic_map_fn(fn, elems, dtype=None,
     for elem_shape in elem_shapes:
       if (not elem_shape or not elem_shape[0]
           or elem_shape[0] != elem_shapes[0][0]):
-        return tf.map_fn(fn, elems, dtype, parallel_iterations, back_prop)
+        return tf.numpy_preprocess(fn, elems, dtype, parallel_iterations, back_prop)
     arg_tuples = zip(*[tf.unstack(elem) for elem in elems])
     outputs = [fn(arg_tuple) for arg_tuple in arg_tuples]
   else:
@@ -232,7 +232,7 @@ def static_or_dynamic_map_fn(fn, elems, dtype=None,
       raise ValueError('`elems` must be a Tensor or list of Tensors.')
     elems_shape = elems.shape.as_list()
     if not elems_shape or not elems_shape[0]:
-      return tf.map_fn(fn, elems, dtype, parallel_iterations, back_prop)
+      return tf.numpy_preprocess(fn, elems, dtype, parallel_iterations, back_prop)
     outputs = [fn(arg) for arg in tf.unstack(elems)]
   # Stack `outputs`, which is a list of Tensors or list of lists of Tensors
   if all([isinstance(output, tf.Tensor) for output in outputs]):

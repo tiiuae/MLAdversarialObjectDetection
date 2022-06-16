@@ -96,30 +96,32 @@ def _read_image(img_dir, filename):
     return np.asarray(im)
 
 
-def filter_by_dims(img_dir, label_dir, min_area_ratio, aspect, filename):
-    return True
+def filter_by_dims(img_dir, label_dir, max_area_ratio, aspect, filename):
+    # return True
     im = _read_image(img_dir, filename)
     h, w, _ = im.shape
     filename = os.path.extsep.join([os.path.splitext(filename)[0], 'txt'])
     with open(os.path.join(label_dir, filename)) as f:
         for line in f.readlines():
             ymin, xmin, ymax, xmax = _parse_line(line)
+            if ymin < 20 or xmin < 20 or ymax > h - 20 or xmax > w - 20:
+                return False
             hp = ymax - ymin
             wp = xmax - xmin
-            area_ratio = hp / h
-            w_ratio = wp / w
-            ratio = wp / (hp + 1e-12)  # to avoid zero div
-            if area_ratio >= min_area_ratio and w_ratio >= min_width_ratio and ratio >= aspect:
-                return True
+            area_ratio = (hp * wp) / (h * w)
+            # w_ratio = wp / w
+            # ratio = wp / (hp + 1e-12)  # to avoid zero div
+            if area_ratio >= max_area_ratio:
+                return False
+    return True
 
 
-def partition(config, img_dir, label_dir, min_area_ratio=.7, aspect_ratio=0.,
-              train_split=0.8, val_split=0.1, test_split=0.1, *, batch_size=2,
-              shuffle=True):
-    assert (train_split + test_split + val_split) == 1.
+def partition(config, img_dir, label_dir, max_area_ratio=.3, aspect_ratio=0., train_split=0.9, val_split=0.1, *,
+              batch_size=2, shuffle=True):
+    assert (train_split + val_split) == 1.
 
     logger.info('filtering dataset by label constraints...')
-    func = functools.partial(filter_by_dims, img_dir, label_dir, min_area_ratio, aspect_ratio)
+    func = functools.partial(filter_by_dims, img_dir, label_dir, max_area_ratio, aspect_ratio)
     file_list = list(filter(func, os.listdir(img_dir)))
     ds_size = len(file_list)
     logger.info(f'done. data size is {ds_size}')
@@ -129,21 +131,22 @@ def partition(config, img_dir, label_dir, min_area_ratio=.7, aspect_ratio=0.,
 
     logger.info(f'training on {train_size} images, validating on {val_size}')
 
+    @tf.autograph.experimental.do_not_convert
     def get_tf_dataset(start, end):
         output_size = utils.parse_image_size(config.image_size)
         dseq = COCOPersonsSequence(img_dir, output_size, config.mean_rgb, config.stddev_rgb,
                                    file_list=file_list[start:end], shuffle=shuffle)
         return tf.data.Dataset.from_generator(dseq, output_signature=tf.TensorSpec(shape=(*output_size, 3),
                                                                                    dtype=tf.float32)
-                                              ).batch(batch_size).prefetch(10)
+                                              ).batch(batch_size).prefetch(10).\
+            map(tf.image.random_flip_left_right).\
+            map(lambda im: tf.image.random_brightness(im, .2)).map(lambda im: tf.image.random_contrast(im, .5, 1.5))
 
     train_ds = get_tf_dataset(0, train_size)
-    val_ds = get_tf_dataset(train_size, train_size + val_size)
-    test_ds = get_tf_dataset(train_size + val_size, ds_size)
+    val_ds = get_tf_dataset(train_size, ds_size)
 
     return {'train': {'dataset': train_ds, 'length': math.ceil(train_size / batch_size)},
-            'val': {'dataset': val_ds, 'length': math.ceil(val_size / batch_size)},
-            'test': {'dataset': test_ds, 'length': math.ceil((ds_size - val_size - train_size) / batch_size)}}
+            'val': {'dataset': val_ds, 'length': math.ceil(val_size / batch_size)}}
 
 
 def main(download_model=False):

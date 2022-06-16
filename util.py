@@ -16,7 +16,6 @@ import shapely.geometry
 import tensorflow as tf
 
 from tf2 import infer_lib
-
 from visualize.vis_utils import draw_bounding_box_on_image_array
 
 
@@ -79,7 +78,7 @@ def ensure_empty_dir(dirname):
 def draw_boxes(frame, bb, sc):
     for box, score in zip(bb, sc):
         ymin, xmin, ymax, xmax = box
-        color = 'green' if score >= .7 else 'yellow' if score >= .6 else 'red'
+        color = 'green' if score >= .75 else 'yellow' if score >= .65 else 'red'
         draw_bounding_box_on_image_array(
             frame,
             ymin,
@@ -201,3 +200,19 @@ def diou_loss(b1, b1_area, b1_height, b1_width, b2):
         # enclose_area = enclose_width * enclose_height
         # giou = iou - tf.math.divide_no_nan((enclose_area - union_area), enclose_area)
         return 1. - diou
+
+
+def binary_ce(y_true, y_pred):
+    mask_targets = tf.where(tf.not_equal(y_true, 0.), 1., 0.)
+    alpha_factor = 1. - tf.reduce_mean(mask_targets)
+
+    y_true = tf.cast(y_true, tf.float32)
+    epsilon = tf.keras.backend.epsilon()
+    y_pred = tf.clip_by_value(y_pred, epsilon, 1. - epsilon)
+    p_t = tf.where(tf.equal(y_true, 1.), y_pred, 1. - y_pred)
+    alpha_t = tf.where(tf.equal(y_true, 1.), alpha_factor, 1. - alpha_factor)
+    cross_entropy = -tf.math.log(p_t)
+
+    loss = alpha_t * cross_entropy
+    loss = tf.reduce_sum(tf.reduce_mean(loss, axis=1))
+    return loss

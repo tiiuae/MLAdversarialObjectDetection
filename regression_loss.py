@@ -12,7 +12,7 @@ import tensorflow as tf
 import util
 
 
-class DIOULoss:
+class InverseDIOULoss:
     def __init__(self):
         self._loop_var = tf.Variable(0, trainable=False, dtype=tf.int32)
         self._failed_count = tf.Variable(0., dtype=tf.float32, trainable=False)
@@ -28,7 +28,7 @@ class DIOULoss:
             boxes_gt_area = boxes_gt_height * boxes_gt_width
 
             def atk_failed():
-                dious = tf.reduce_min(tf.map_fn(func, boxes_pred[self._loop_var]), axis=0)
+                dious = tf.reduce_max(tf.map_fn(func, boxes_pred[self._loop_var]), axis=0)
                 return tf.reduce_sum(dious)
 
             func = functools.partial(self._calc_valid, boxes_gt, boxes_gt_area, boxes_gt_height, boxes_gt_width)
@@ -47,7 +47,7 @@ class DIOULoss:
     def _is_valid(self, boxes_gt, boxes_gt_area, boxes_gt_height, boxes_gt_width, box, ind):
         box_gt = boxes_gt[ind]
         box_gt_area, box_gt_height, box_gt_width = boxes_gt_area[ind], boxes_gt_height[ind], boxes_gt_width[ind]
-        return util.diou_loss(box_gt, box_gt_area, box_gt_height, box_gt_width, box)
+        return 1. - util.diou_loss(box_gt, box_gt_area, box_gt_height, box_gt_width, box)
 
     def _calc_valid(self, boxes_gt, boxes_gt_area, boxes_gt_height, boxes_gt_width, box):
         fn = functools.partial(self._is_valid, boxes_gt, boxes_gt_area, boxes_gt_height, boxes_gt_width, box)
