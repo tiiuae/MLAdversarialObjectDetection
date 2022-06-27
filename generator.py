@@ -6,7 +6,7 @@ Created: April 28, 2022
 Purpose: patch generator
 """
 from keras.backend import concatenate
-from keras.layers import Layer, BatchNormalization, Activation, Dropout, Dense
+from keras.layers import Layer, BatchNormalization, Activation, Dropout, Dense, Add, Multiply
 from keras.layers.convolutional import Conv2D, Conv2DTranspose
 from keras.layers.pooling import MaxPooling2D
 from keras.models import Model
@@ -20,8 +20,8 @@ class NoiseGenerator(Model):
         self.conv_blocks = [Conv2DBlock(name=f'conv{i}', n_filters=n_filters * (2 ** i), batchnorm=batchnorm,
                                         dropout=dropout)
                             for i in range(4)]
-        self.conv_blocks.append(Conv2DBlock(name='conv4', n_filters=n_filters * (2 ** 4), batchnorm=batchnorm,
-                                            maxpool=False))
+        self.conv_no_skip = Conv2DBlock(name='conv4', n_filters=n_filters * (2 ** 4), batchnorm=batchnorm,
+                                        maxpool=False)
 
         self.deconv_blocks = []
         m = 8
@@ -37,13 +37,48 @@ class NoiseGenerator(Model):
         encs = []
         for layer in self.conv_blocks:
             enc, x = layer(x, training=training)
-            if enc is not None:
-                encs.append(enc)
+            encs.append(enc)
+        x = self.conv_no_skip(x, training=training)
 
         encs = encs[::-1]
         for enc, layer in zip(encs, self.deconv_blocks):
-            x = layer((x, enc), training=training)
+            x = layer([x, enc], training=training)
         return self.op(x)
+
+
+class AttentionBlock(Layer):
+    def __init__(self, name, n_filters, **kwargs):
+        super().__init__(**kwargs, name=name)
+        self.l1 = Conv2D(n_filters, 1, padding='valid', name=f'{name}/cnv1')
+        self.l2 = BatchNormalization(name=f'{name}/bn1')
+
+        self.l3 = Conv2D(n_filters, 1, padding='valid', name=f'{name}/cnv2')
+        self.l4 = BatchNormalization(name=f'{name}/bn2')
+
+        self.l5 = Add(name=f'{name}/add')
+        self.l6 = Activation('leaky_relu', name=f'{name}/act1')
+
+        self.l7 = Conv2D(1, 1, padding='valid', name=f'{name}/conv3')
+        self.l8 = BatchNormalization(name=f'{name}/bn3')
+        self.l9 = Activation('sigmoid', name=f'{name}/act2')
+
+        self.l10 = Multiply(name=f'{name}/mul')
+
+    def __call__(self, input_tensor, *args, training=False, **kwargs):
+        up_in, skip_in = input_tensor
+        g = self.l1(up_in)
+        g = self.l2(g, training=training)
+
+        x = self.l3(skip_in)
+        x = self.l4(x, training=training)
+
+        x = self.l5([g, x])
+        x = self.l6(x)
+
+        x = self.l7(x)
+        x = self.l8(x, training=training)
+        x = self.l9(x)
+        return self.l10([skip_in, x])
 
 
 class Conv2DBlock(Layer):
@@ -87,14 +122,19 @@ class Conv2DBlock(Layer):
                 return x, self.l8(f, training=training)
         if self.dropout:
             return x, self.l8(x, training=training)
-        return None, x
+        return x
 
 
 class Conv2DTransposeBlock(Layer):
-    def __init__(self, *args, name, n_filters, kernel_size=3, dropout=None, batchnorm=True, **kwargs):
+    def __init__(self, *args, name, n_filters, kernel_size=3, dropout=None, batchnorm=True, attention=True, **kwargs):
         super().__init__(*args, **kwargs, name=name)
         self.l1 = Conv2DTranspose(filters=n_filters, kernel_size=(kernel_size, kernel_size), strides=(2, 2),
                                   kernel_initializer='he_normal', padding='same', name=f'{name}/cnv')
+
+        if attention:
+            self.att = AttentionBlock(name=f'{name}/attention', n_filters=n_filters)
+        self.attention = attention
+
         self.l2 = Dropout(dropout, name=f'{name}/do')
         self.l3 = Conv2DBlock(name=f'{name}/convblock', n_filters=n_filters, kernel_size=kernel_size, maxpool=False,
                               batchnorm=batchnorm)
@@ -102,9 +142,13 @@ class Conv2DTransposeBlock(Layer):
     def call(self, input_tensor, training=False):
         fw, skip = input_tensor
         x = self.l1(fw)
+
+        if self.attention:
+            skip = self.att([x, skip], training=training)
+
         x = concatenate([x, skip])
         x = self.l2(x, training=training)
-        _, x = self.l3(x)
+        x = self.l3(x)
         return x
 
 
@@ -140,7 +184,7 @@ def define_regressor():
 
 
 def main():
-    model = define_generator(480)
+    model = define_generator(640)
     model.summary()
 
 

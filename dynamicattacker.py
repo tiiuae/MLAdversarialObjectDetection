@@ -18,7 +18,6 @@ from tifffile import tifffile
 
 import histogram_matcher
 import metrics
-import regression_loss
 from tf2 import postprocess, efficientdet_keras
 
 
@@ -33,8 +32,8 @@ class DynamicPatchAttacker(tf.keras.Model):
         if config_override:
             self.model.config.override(config_override)
         if initial_weights is None:
-            patch_img = np.random.uniform(-1., 1., size=(480, 480, 3))
-            scale = .5
+            patch_img = np.random.uniform(-1., 1., size=(640, 640, 3))
+            scale = .4
         else:
             patch_img = tifffile.imread(os.path.join(initial_weights, 'patch.tiff'))
             with open(os.path.join(initial_weights, 'scale.txt')) as f:
@@ -54,7 +53,6 @@ class DynamicPatchAttacker(tf.keras.Model):
         self._metric = metrics.AttackSuccessRate(iou_thresh=iou)
         self.bins = np.arange(self.config.nms_configs.score_thresh, .805, .01, dtype='float32')
         self.asr = [tf.Variable(0., dtype=tf.float32, trainable=False) for _ in self.bins]
-        self._inv_diou_loss = regression_loss.InverseDIOULoss()
 
     def filter_valid_boxes(self, images, boxes, scores, thresh=True):
         _, h, w, _ = tf.unstack(tf.cast(tf.shape(images), tf.float32))
@@ -67,7 +65,7 @@ class DynamicPatchAttacker(tf.keras.Model):
                                    tf.greater_equal(scores, self.config.nms_configs.score_thresh))
         else:
             cond2 = tf.greater(boxes_area, tf.constant(100.))
-        return tf.logical_and(cond1, cond2), boxes_area / (h * w)
+        return tf.logical_and(cond1, cond2)
 
     def first_pass(self, images):
         cls_outputs, box_outputs = self.model(images, pre_mode=None, post_mode=None)
@@ -81,7 +79,7 @@ class DynamicPatchAttacker(tf.keras.Model):
             boxes = tf.ragged.boolean_mask(boxes, person_indices)
             classes = tf.ragged.boolean_mask(classes, person_indices)
 
-            valid_boxes, _ = self.filter_valid_boxes(images, boxes, scores)
+            valid_boxes = self.filter_valid_boxes(images, boxes, scores)
             boxes = tf.ragged.boolean_mask(boxes, valid_boxes)
             scores = tf.ragged.boolean_mask(scores, valid_boxes)
             classes = tf.ragged.boolean_mask(classes, valid_boxes)
@@ -102,12 +100,11 @@ class DynamicPatchAttacker(tf.keras.Model):
             boxes = tf.ragged.boolean_mask(boxes, person_indices)
             classes = tf.ragged.boolean_mask(classes, person_indices)
 
-            valid_boxes, boxes_area = self.filter_valid_boxes(images, boxes, scores, thresh=False)
+            valid_boxes = self.filter_valid_boxes(images, boxes, scores, thresh=False)
             scores = tf.ragged.boolean_mask(scores, valid_boxes)
             boxes = tf.ragged.boolean_mask(boxes, valid_boxes)
             classes = tf.ragged.boolean_mask(classes, valid_boxes)
-            boxes_area = tf.ragged.boolean_mask(boxes_area, valid_boxes)
-        return boxes, scores, classes, boxes_area
+        return boxes, scores, classes
 
     def _postprocessing(self, boxes, scores, classes):
         with tf.name_scope('post_processing'):
@@ -131,19 +128,16 @@ class DynamicPatchAttacker(tf.keras.Model):
 
         with tf.GradientTape() as tape:
             images = self._patcher([boxes, images])
-            boxes_pred, scores_pred, classes, boxes_area = self.second_pass(images)
-            score_density = scores_pred / boxes_area
-            counts = tf.cast(score_density.row_lengths(axis=1), tf.float32)
-            sums = tf.reduce_sum(score_density, axis=1)
-            sc_losses = tf.math.divide_no_nan(sums, counts)
+            boxes_pred, scores_pred, classes = self.second_pass(images)
             max_scores = tf.maximum(tf.reduce_max(scores_pred, axis=1), 0.)
             scale_losses = (max_scores - self._scale_regressor) ** 2.
-            loss = tf.reduce_sum(sc_losses + scale_losses)  # + self._inv_diou_loss(boxes_pred, boxes)
+            loss = tf.reduce_sum(max_scores ** 2. + scale_losses)
 
         self.add_metric(loss, name='loss')
         self.add_metric(self._scale_regressor.value(), name='scale')
         self.add_metric(tf.reduce_sum(scale_losses), name='scale_loss')
         self.add_metric(tf.reduce_mean(max_scores), name='mean_max_score')
+        self.add_metric(tf.math.reduce_std(max_scores), name='std_max_score')
 
         boxes_pred, scores_pred = self._postprocessing(boxes_pred, scores_pred, classes)
         self.add_metric(self.calc_asr(scores, scores_pred, boxes, boxes_pred), name='asr')
@@ -238,8 +232,8 @@ class Patcher(tf.keras.layers.Layer):
         self._scale = scale_regressor
 
     def random_print_adjust(self):
-        w = tf.random.normal((1, 1, 3), .7, .01)
-        b = tf.random.normal((1, 1, 3), -.3, .01)
+        w = tf.random.normal((1, 1, 3), .5, .1)
+        b = tf.random.normal((1, 1, 3), 0., .01)
         return tf.clip_by_value(w * self._patch + b, -1., 1.)
 
     def add_patches_to_image(self, image):
@@ -283,7 +277,7 @@ class Patcher(tf.keras.layers.Layer):
         im = tfa.image.rotate(im, angle, interpolation='bilinear', fill_value=-2.)
         patch_bg = image[ymin_patch: ymax_patch, xmin_patch: xmax_patch]
         # tf.print(tf.shape(im), tf.shape(patch_bg))
-        im = tf.where(tf.equal(im, -2.), patch_bg, im)
+        im = tf.where(tf.less(im, -1.), patch_bg, im)
         im = tf.clip_by_value(im, -1., 1.)
 
         image = tf.tensor_scatter_nd_update(image, idx, im)

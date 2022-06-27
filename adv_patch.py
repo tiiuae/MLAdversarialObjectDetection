@@ -5,8 +5,6 @@ Created: 31 March, 2022
 
 Purpose: Adversarial patch creation based on bounding box
 """
-import math
-
 import cv2
 import numpy as np
 from PIL import Image
@@ -23,7 +21,9 @@ class AdversarialPatch:
         self._printed = False
         self.mean_rgb = 127.
         self.stddev_rgb = 128.
+        # Image.fromarray(self._patch_img).show()
         self._patch_img = self.print_patch()
+        # Image.fromarray(self._patch_img).show()
         self.output_size = h, w
 
     def print_patch(self):
@@ -33,8 +33,8 @@ class AdversarialPatch:
         patch = self._patch_img - self.mean_rgb
         patch /= self.stddev_rgb
 
-        w = np.random.normal(.7, .01, size=(1, 1, 3))
-        b = np.random.normal(-0.3, .01, size=(1, 1, 3))
+        w = np.random.normal(.5, .1, size=(1, 1, 3))
+        b = np.random.normal(0., .01, size=(1, 1, 3))
         patch = w * patch + b
 
         patch *= self.stddev_rgb
@@ -46,9 +46,9 @@ class AdversarialPatch:
         ymin, xmin, ymax, xmax = bbox
         h, w = ymax - ymin, xmax - xmin
 
-        area = h * w
+        long_side = max(h, w)
 
-        patch_w = int(math.sqrt(area * self.scale))
+        patch_w = int(long_side * self.scale)
         patch_h = patch_w
 
         orig_y = ymin + h / 2.
@@ -87,7 +87,6 @@ class AdversarialPatch:
         source, target = src[:, :, 0], tgt[:, :, 0]
         source_mean = np.mean(source)
         target_mean = np.mean(target)
-        print(source_mean, target_mean)
         res = np.clip(source - source_mean + target_mean, 0., 255.)
 
         src[:, :, 0] = res.astype('uint8')

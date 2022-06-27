@@ -19,14 +19,22 @@ logger = util.get_logger(__name__)
 
 class Stream:
     """stream from file or webcam"""
-    def __init__(self, path=None, *, set_width=640):
+    def __init__(self, path=None, *, filter_func=None, sort_func=None, set_width=640):
         self.path = path if path is not None else 0
         self.set_width = set_width
 
         if not path or os.path.isfile(path):
-            self.cap = cv2.VideoCapture(self.path)
+            self.cap = cv2.VideoCapture(path)
             if not self.cap.isOpened():
                 print('Error opening input video: {}'.format(path))
+        elif os.path.isdir(path):
+            self.files = os.listdir(path)
+            if filter_func:
+                logger.info('filtering dataset by label constraints...')
+                self.files = list(filter(filter_func, self.files))
+                logger.info(f'done. data size is {len(self.files)}')
+            if sort_func:
+                self.files.sort(key=sort_func)
 
     def play_from_video(self):
         try:
@@ -44,10 +52,8 @@ class Stream:
         finally:
             self.cap.release()
 
-    def play_from_dir(self):
-        files = os.listdir(self.path)
-        files.sort(key=lambda x: int(x[len('preview'):-len('.png')]))
-        for file in files:
+    def play_from_list(self):
+        for file in self.files:
             time.sleep(1/24)
             file = os.path.join(self.path, file)
             frame = np.asarray(Image.open(file).convert('RGB'))
@@ -59,7 +65,7 @@ class Stream:
 
     def play(self):
         if os.path.isdir(self.path):
-            yield from self.play_from_dir()
+            yield from self.play_from_list()
         else:
             yield from self.play_from_video()
 

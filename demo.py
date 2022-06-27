@@ -29,12 +29,11 @@ class Demo:
     txt_kwargs = {'font': cv2.FONT_HERSHEY_TRIPLEX, 'font_scale': .5, 'font_color': (148, 0, 211), 'thickness': 1,
                   'line_type': 1}
 
-    def __init__(self, name, dct: detector.Detector, tw, th, *, min_score_thresh=SCORE_THRESH, rolling_avg_window=10):
+    def __init__(self, name, dct: detector.Detector, tw, th, *, min_score_thresh=SCORE_THRESH):
         self.name = name
         self.dct_obj = dct
         self._queue = []
         self.min_score_thresh = min_score_thresh
-        self._queue_length = rolling_avg_window
         self.title_pos = tw, th
         self.offset = 0
 
@@ -44,8 +43,6 @@ class Demo:
         return round(np.mean(self._queue) * 100.)
 
     def _add_item(self, item):
-        if len(self._queue) >= self._queue_length:
-            del self._queue[0]
         self._queue.append(item)
 
     def run(self, frame):
@@ -57,7 +54,7 @@ class Demo:
 
         bb, sc1 = util.filter_by_thresh(bb, sc, self.min_score_thresh)
         util.puttext(frame, self.name, self.title_pos, **self.txt_kwargs)
-        util.puttext(frame, f'max detection score ({self._queue_length} frame mean.):'
+        util.puttext(frame, f'average max detection score:'
                             f'{mean_sc}%', (title_pos_w, title_pos_h + self.offset), **self.txt_kwargs)
         frame = util.draw_boxes(frame, bb, sc1)
         return frame, bb, max(sc) * 100. if len(sc) else -1.
@@ -188,16 +185,14 @@ def make_info_frame(info_frame):
 
 
 def main(input_file=None, save_file=None, live=False):
-    stream = streaming.Stream(path=input_file)
-
-    config_override = {'nms_configs': {'iou_thresh': .5, 'score_thresh': 0.},
-                       'image_size': 480}
+    stream = streaming.Stream(path=input_file, sort_func=lambda x: int(x[len('preview'):-len('.png')]))
+    config_override = {'nms_configs': {'iou_thresh': .5, 'score_thresh': 0.}}
     dct = detector.Detector(params=config_override, download_model=False)
-    atk_dir = 'save_dir/patch_12_0.5787'
+    atk_dir = 'save_dir_max_score/patch_169_0.8028'
 
     with open(os.path.join(atk_dir, 'scale.txt')) as f:
-        # scale = ast.literal_eval(f.read())
-        scale = .5
+        scale = ast.literal_eval(f.read())
+        # scale = .5
 
     patch = adv_patch.AdversarialPatch(scale=scale, patch_file=os.path.join(atk_dir, 'patch.png'))
 
@@ -210,7 +205,7 @@ def main(input_file=None, save_file=None, live=False):
     demo_clean = Demo('clean', dct, 30, frame.shape[0] - 40)
     demo_patch = AttackDemo(patch, 'adv. patch', dct, 250, frame.shape[0] - 40)
     demo_rnd_patch = AttackDemo(rand_patch, 'random patch (as baseline)', dct, 30, frame.shape[0] - 40)
-    demo_recovery = RecoveryDemo('det/save_dir/patch_100_0.7913/antipatch.h5', patch, 'recovery', dct, 30,
+    demo_recovery = RecoveryDemo('det/save_dir_small_images/patch_68_0.5682/antipatch.h5', patch, 'recovery', dct, 30,
                                  frame.shape[0] - 40)
 
     if live:
@@ -241,7 +236,6 @@ def main(input_file=None, save_file=None, live=False):
             mal_frame, sc_before = demo_patch.run(frame.copy(), bb)
             ctrl_frame, sc_random = demo_rnd_patch.run(frame.copy(), bb)
 
-            # frame = np.concatenate([ann_frame, mal_frame, ctrl_frame], axis=1)
             frame_top = np.concatenate([ann_frame, mal_frame], axis=1)
             dct_frame, sc_after = demo_recovery.run(frame, bb, sc_before)
 
@@ -258,7 +252,7 @@ def main(input_file=None, save_file=None, live=False):
 
             frame = cv2.resize(frame, output_size)
             center = frame.shape[0] // 2, frame.shape[1] // 2
-            width, height = 400, 300
+            width, height = 200, 150
             half_width, half_height = width // 2, height // 2
             frame[center[0] - half_height:center[0] + half_height,
             center[1] - half_width:center[1] + half_width] = cv2.resize(data, (width, height))
@@ -266,7 +260,7 @@ def main(input_file=None, save_file=None, live=False):
             if live:
                 ax.set_data(frame)
                 plt.ion()
-                plt.pause(.01)
+                plt.pause(.1)
 
             if save_file is not None:
                 frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
@@ -280,5 +274,5 @@ def main(input_file=None, save_file=None, live=False):
 if __name__ == '__main__':
     main(input_file='eduardo_flying',  # change to a mp4 file or None for webcam stream
          save_file='out1.mp4',  # change to a mp4 file or None for no save
-         live=True  # True if wish to see live streamq
+         live=True  # True if wish to see live streaminq
          )
