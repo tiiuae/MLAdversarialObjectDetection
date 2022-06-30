@@ -97,7 +97,7 @@ def _read_image(img_dir, filename):
 
 
 def filter_by_dims(img_dir, label_dir, max_area_ratio, filename):
-    # return True
+    return True
     im = _read_image(img_dir, filename)
     h, w, _ = im.shape
     filename = os.path.extsep.join([os.path.splitext(filename)[0], 'txt'])
@@ -138,10 +138,15 @@ def partition(config, img_dir, label_dir, max_area_ratio=.1, train_split=0.9, va
                                    file_list=file_list[start:end], shuffle=shuffle)
         ds = tf.data.Dataset.from_generator(dseq, output_signature=tf.TensorSpec(shape=(*output_size, 3),
                                                                                  dtype=tf.float32)
-                                            ).batch(batch_size).prefetch(10)
-        if validation:
-            return ds.map(tf.image.random_flip_left_right).map(lambda im: tf.image.random_brightness(im, .2)). \
-                map(lambda im: tf.image.random_contrast(im, .5, 1.5))
+                                            ).batch(batch_size).prefetch(tf.data.AUTOTUNE)
+        if not validation:
+            data_augmentation = tf.keras.Sequential([
+                tf.keras.layers.RandomFlip('horizontal'),
+                tf.keras.layers.RandomContrast(.5)
+            ])
+            return ds.map(tf.image.random_flip_left_right). \
+                map(data_augmentation, num_parallel_calls=tf.data.AUTOTUNE). \
+                map(lambda im: tf.image.random_brightness(im, .2), num_parallel_calls=tf.data.AUTOTUNE)
         return ds
 
     train_ds = get_tf_dataset(0, train_size)

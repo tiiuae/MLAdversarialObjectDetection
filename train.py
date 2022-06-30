@@ -25,7 +25,7 @@ MODEL = 'efficientdet-lite4'
 
 
 def main(download_model=False):
-    log_dir = util.ensure_empty_dir('log_dir/max_score')
+    log_dir = util.ensure_empty_dir('log_dir/atk_new_data')
     gpu = tf.config.list_physical_devices('GPU')[0]
     tf.config.experimental.set_memory_growth(gpu, True)
 
@@ -37,8 +37,7 @@ def main(download_model=False):
                                           visualize_freq=200)
     model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=1e-2), run_eagerly=False)
 
-    datasets: dict = train_data_generator.partition(model.config, 'downloaded_images', 'labels',
-                                                    batch_size=12, shuffle=True)
+    datasets: dict = train_data_generator.partition(model.config, 'train_eval', '', batch_size=12, shuffle=True)
 
     train_ds = datasets['train']['dataset']
     val_ds = datasets['val']['dataset']
@@ -49,9 +48,9 @@ def main(download_model=False):
                                                  update_freq='epoch')
     model.tb = tb_callback
 
-    save_dir = util.ensure_empty_dir('save_dir_max_score')
-    save_file = 'patch_{epoch:02d}_{val_asr:.4f}'
-    model.fit(train_ds, validation_data=val_ds, epochs=200, steps_per_epoch=train_len,
+    save_dir = util.ensure_empty_dir('save_dir_new_data')
+    save_file = 'patch_{epoch:02d}_{val_asr_to_scale:.4f}'
+    model.fit(train_ds, validation_data=val_ds, epochs=500, steps_per_epoch=train_len,
               # initial_epoch=12,
               validation_steps=val_len,
               callbacks=[tb_callback,
@@ -65,7 +64,7 @@ def main(download_model=False):
                                                             options=None,
                                                             initial_value_threshold=None
                                                             ),
-                         tf.keras.callbacks.ReduceLROnPlateau(monitor='loss', verbose=1, factor=.5, min_lr=1e-5)
+                         tf.keras.callbacks.ReduceLROnPlateau(monitor='val_loss', verbose=1, factor=.5, min_lr=1e-5)
                          ])
 
 
