@@ -26,7 +26,7 @@ SCORE_THRESH = .55
 
 
 class Demo:
-    txt_kwargs = {'font': cv2.FONT_HERSHEY_TRIPLEX, 'font_scale': .5, 'font_color': (148, 0, 211), 'thickness': 1,
+    txt_kwargs = {'font': cv2.FONT_HERSHEY_TRIPLEX, 'font_scale': .7, 'font_color': (0, 0, 255), 'thickness': 1,
                   'line_type': 1}
 
     def __init__(self, name, dct: detector.Detector, tw, th, *, min_score_thresh=SCORE_THRESH):
@@ -54,7 +54,7 @@ class Demo:
 
         bb, sc1 = util.filter_by_thresh(bb, sc, self.min_score_thresh)
         util.puttext(frame, self.name, self.title_pos, **self.txt_kwargs)
-        util.puttext(frame, f'average max detection score:'
+        util.puttext(frame, f'average obj. detection score:'
                             f'{mean_sc}%', (title_pos_w, title_pos_h + self.offset), **self.txt_kwargs)
         frame = util.draw_boxes(frame, bb, sc1)
         return frame, bb, max(sc) * 100. if len(sc) else -1.
@@ -64,15 +64,23 @@ class AttackDemo(Demo):
     def __init__(self, patch: adv_patch.AdversarialPatch, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.patch_obj = patch
+        self._atk_queue = []
 
-    def run(self, frame, bb):
+    def calc_asr(self):
+        thresh = int(self.min_score_thresh * 100.)
+        success = len(list(filter(lambda x: x < thresh, self._atk_queue)))
+        return round(success / len(self._atk_queue) * 100.)
+
+    def run(self, frame, bb, osc):
         mal_frame = self.patch_obj.add_adv_to_img(frame, bb)
         mal_frame, _, sc = super().run(mal_frame)
-        if sc > -1.:
-            thresh = int(self.min_score_thresh * 100.)
+        thresh = int(self.min_score_thresh * 100.)
+        if sc > -1. and osc > thresh:
+            self._atk_queue.append(sc)
+            util.puttext(mal_frame, f'attack success rate: {self.calc_asr()}%', (30, 30), **self.txt_kwargs)
             txt_kwargs = {k: v for k, v in self.txt_kwargs.items()}
             txt_kwargs.update(dict(font_color=(255, 0, 0) if sc < thresh else (0, 255, 0), font_scale=1.,
-                                   thickness=2))
+                                   thickness=1))
             detection = 'ATTACK SUCCESS' if sc < thresh else 'attack failed'
             title_pos_w, title_pos_h = self.title_pos
             self.offset -= 130
@@ -85,19 +93,28 @@ class RecoveryDemo(Demo):
         super().__init__(*args, **kwargs)
         self.patch_obj = patch
         self.config = self.dct_obj.driver.model.config
-        self._antipatch = generator.define_generator(self.config.image_size)
+        self._antipatch = generator.define_generator(self.config.image_size, generator.NoiseGenerator)
         self._antipatch.load_weights(weights_file)
+        self._diff_queue = []
+        self.atk_detection_thresh = 10.
 
-    def run(self, frame, bb, sc):
+    def calc_adr(self):
+        success = len(list(filter(lambda x: x > self.atk_detection_thresh, self._diff_queue)))
+        return round(success / len(self._diff_queue) * 100.)
+
+    def run(self, frame, bb, sc, osc):
         mal_frame = self.patch_obj.add_adv_to_img(frame, bb)
         recovered_frame = np.clip(self.serve(mal_frame[np.newaxis]), 0., 255.).astype('uint8')
         recovered_frame, _, sc_after = super().run(recovered_frame)
-        if sc > -1.:
+        thresh = int(self.min_score_thresh * 100.)
+        if sc > -1. and osc > thresh:
             score_recovery = sc_after - sc
+            self._diff_queue.append(score_recovery)
+            util.puttext(recovered_frame, f'attack detection rate: {self.calc_adr()}%', (180, 30), **self.txt_kwargs)
             txt_kwargs = {k: v for k, v in self.txt_kwargs.items()}
-            txt_kwargs.update(dict(font_color=(255, 0, 0) if score_recovery < 10. else (0, 255, 0), font_scale=1.,
-                                   thickness=2))
-            detection = 'no detection' if score_recovery < 10. else 'ATTACK DETECTED'
+            txt_kwargs.update(dict(font_color=(255, 0, 0) if score_recovery < self.atk_detection_thresh
+            else (0, 255, 0), font_scale=1., thickness=1))
+            detection = 'no detection' if score_recovery < self.atk_detection_thresh else 'ATTACK DETECTED'
             title_pos_w, title_pos_h = self.title_pos
             self.offset -= 130
             util.puttext(recovered_frame, detection, (title_pos_w + 130, title_pos_h + self.offset), **txt_kwargs)
@@ -188,7 +205,7 @@ def main(input_file=None, save_file=None, live=False):
     stream = streaming.Stream(path=input_file, sort_func=lambda x: int(x[len('preview'):-len('.png')]))
     config_override = {'nms_configs': {'iou_thresh': .5, 'score_thresh': 0.}}
     dct = detector.Detector(params=config_override, download_model=False)
-    atk_dir = 'save_dir_max_score/patch_169_0.8028'
+    atk_dir = 'save_dir_new_data/patch_434_2.1692'
 
     with open(os.path.join(atk_dir, 'scale.txt')) as f:
         scale = ast.literal_eval(f.read())
@@ -205,7 +222,7 @@ def main(input_file=None, save_file=None, live=False):
     demo_clean = Demo('clean', dct, 30, frame.shape[0] - 40)
     demo_patch = AttackDemo(patch, 'adv. patch', dct, 250, frame.shape[0] - 40)
     demo_rnd_patch = AttackDemo(rand_patch, 'random patch (as baseline)', dct, 30, frame.shape[0] - 40)
-    demo_recovery = RecoveryDemo('det/save_dir_small_images/patch_68_0.5682/antipatch.h5', patch, 'recovery', dct, 30,
+    demo_recovery = RecoveryDemo('det/save_dir_attention/patch_200_0.0676/antipatch.h5', patch, 'recovery', dct, 30,
                                  frame.shape[0] - 40)
 
     if live:
@@ -233,11 +250,11 @@ def main(input_file=None, save_file=None, live=False):
     try:
         for i, frame in enumerate(player):
             ann_frame, bb, sc_clean = demo_clean.run(frame.copy())
-            mal_frame, sc_before = demo_patch.run(frame.copy(), bb)
-            ctrl_frame, sc_random = demo_rnd_patch.run(frame.copy(), bb)
+            mal_frame, sc_before = demo_patch.run(frame.copy(), bb, sc_clean)
+            ctrl_frame, sc_random = demo_rnd_patch.run(frame.copy(), bb, sc_clean)
 
             frame_top = np.concatenate([ann_frame, mal_frame], axis=1)
-            dct_frame, sc_after = demo_recovery.run(frame, bb, sc_before)
+            dct_frame, sc_after = demo_recovery.run(frame, bb, sc_before, sc_clean)
 
             frame_bottom = np.concatenate([ctrl_frame, dct_frame], axis=1)
             frame = np.concatenate([frame_top, frame_bottom])
@@ -252,7 +269,7 @@ def main(input_file=None, save_file=None, live=False):
 
             frame = cv2.resize(frame, output_size)
             center = frame.shape[0] // 2, frame.shape[1] // 2
-            width, height = 200, 150
+            width, height = 300, 250
             half_width, half_height = width // 2, height // 2
             frame[center[0] - half_height:center[0] + half_height,
             center[1] - half_width:center[1] + half_width] = cv2.resize(data, (width, height))
@@ -273,6 +290,6 @@ def main(input_file=None, save_file=None, live=False):
 
 if __name__ == '__main__':
     main(input_file='eduardo_flying',  # change to a mp4 file or None for webcam stream
-         save_file='out1.mp4',  # change to a mp4 file or None for no save
+         save_file='out111.mp4',  # change to a mp4 file or None for no save
          live=True  # True if wish to see live streaminq
          )

@@ -105,11 +105,20 @@ def calculate_iou(box_1, box_2):
 
 def puttext(img, text, pos, **txt_kwargs):
         font_scale = txt_kwargs.get('font_scale')
-        font_color = txt_kwargs.get('font_color')
-        thickness = txt_kwargs.get('thickness')
+        font_color = (150, 150, 150)
+        thickness = txt_kwargs.get('thickness') + 1
         line_type = txt_kwargs.get('line_type')
         font = cv2.FONT_HERSHEY_SIMPLEX
         bottom_left_corner_of_text = pos
+        cv2.putText(img, text,
+                    bottom_left_corner_of_text,
+                    font,
+                    font_scale,
+                    font_color,
+                    thickness,
+                    line_type)
+        font_color = txt_kwargs.get('font_color')
+        thickness = txt_kwargs.get('thickness')
         cv2.putText(img, text,
                     bottom_left_corner_of_text,
                     font,

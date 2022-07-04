@@ -12,7 +12,7 @@ from PIL import Image
 
 class AdversarialPatch:
 
-    def __init__(self, *, scale, h=480, w=480, patch_file=None):
+    def __init__(self, *, scale, h=640, w=640, patch_file=None):
         if patch_file is not None:
             self._patch_img = np.asarray(Image.open(patch_file).convert('RGB'))
         else:
