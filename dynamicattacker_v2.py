@@ -10,11 +10,11 @@ import os
 
 import numpy as np
 import tensorflow as tf
+import tensorflow_addons as tfa
 import tfplot
 
 import dataloader
 import generator
-import metrics
 from tf2 import postprocess, efficientdet_keras
 
 
@@ -28,7 +28,7 @@ class DynamicPatchAttacker(tf.keras.Model):
         self.config = self.model.config
         if config_override:
             self.model.config.override(config_override)
-        self._patch = generator.define_generator(128)
+        self._patch = generator.define_generator(128, generator.PatchGenerator)
 
         if initial_weights is not None:
             self._patch.load_weights(initial_weights)
@@ -39,8 +39,6 @@ class DynamicPatchAttacker(tf.keras.Model):
         self.tb = None
         self._trainable_variables = self._patch.trainable_variables
 
-        iou = self.config.nms_configs.iou_thresh
-        self._metric = metrics.AttackSuccessRate(iou_thresh=iou)
         self.bins = np.arange(self.config.nms_configs.score_thresh, .805, .01, dtype='float32')
         self.asr = [tf.Variable(0., dtype=tf.float32, trainable=False) for _ in self.bins]
 
@@ -117,17 +115,22 @@ class DynamicPatchAttacker(tf.keras.Model):
         boxes, scores = self.first_pass(images)
 
         with tf.GradientTape() as tape:
-            images, l1_loss = self._patcher([boxes, images])
+            images, mean_scales = self._patcher([boxes, images])
             boxes_pred, scores_pred, classes = self.second_pass(images)
             max_scores = tf.maximum(tf.reduce_max(scores_pred, axis=1), 0.)
-            loss = tf.reduce_sum(max_scores ** 2.) + l1_loss
+            scale_losses = (max_scores - mean_scales) ** 2.
+            loss = tf.reduce_sum(max_scores ** 2. + scale_losses)
 
         self.add_metric(loss, name='loss')
+        self.add_metric(tf.reduce_mean(mean_scales), name='mean_scale')
+        self.add_metric(tf.reduce_sum(scale_losses), name='scale_loss')
         self.add_metric(tf.reduce_mean(max_scores), name='mean_max_score')
         self.add_metric(tf.math.reduce_std(max_scores), name='std_max_score')
 
         boxes_pred, scores_pred = self._postprocessing(boxes_pred, scores_pred, classes)
-        self.add_metric(self.calc_asr(scores, scores_pred, boxes, boxes_pred), name='asr')
+        asr = self.calc_asr(scores, scores_pred, boxes, boxes_pred)
+        self.add_metric(asr, name='asr')
+        self.add_metric(asr / tf.reduce_mean(mean_scales), name='asr_to_mean_scale')
 
         func = functools.partial(self.vis_images, images, boxes, scores, boxes_pred, scores_pred, training)
         tf.cond(tf.equal(tf.math.floormod(self.cur_step, self.visualize_freq), tf.constant(0, tf.int64)),
@@ -152,7 +155,10 @@ class DynamicPatchAttacker(tf.keras.Model):
 
         filt = tf.greater_equal(scores_pred, tf.constant(score_thresh))
         boxes_pred_filt = tf.ragged.boolean_mask(boxes_pred, filt)
-        return self._metric(boxes_pred_filt, labels_filt)
+        return 1. - tf.cast(tf.size(boxes_pred_filt.flat_values),
+                            tf.float32) / (tf.cast(tf.size(labels_filt.flat_values), tf.float32) +
+                                           tf.keras.backend.epsilon())
+        # return self._metric(boxes_pred_filt, labels_filt)
 
     def vis_images(self, images, labels, scores, boxes_pred, scores_pred, training):
         _, h, w, _ = tf.unstack(tf.cast(tf.shape(images), tf.float32))
@@ -203,7 +209,7 @@ class Patcher(tf.keras.layers.Layer):
         self._batch_counter = tf.Variable(tf.constant(0), trainable=False)
         self._patch_counter = tf.Variable(tf.constant(0), trainable=False)
         self._boxes = None
-        self.loss = tf.Variable(tf.constant(0.), trainable=False)
+        self.loss = None
 
     def add_patches_to_image(self, image):
         h, w, _ = tf.unstack(tf.cast(tf.shape(image), tf.float32))
@@ -214,45 +220,101 @@ class Patcher(tf.keras.layers.Layer):
         image, _ = tf.while_loop(lambda image, j: tf.less(self._patch_counter, tf.shape(boxes)[0]),
                                  loop_fn, [image, self._patch_counter])
 
+        self.loss[self._batch_counter].assign(tf.math.divide_no_nan(self.loss[self._batch_counter],
+                                                                    tf.cast(self._patch_counter.value(), tf.float32)))
         self._batch_counter.assign_add(tf.constant(1))
-        return image, self.loss
+        return image
 
     def add_patch_to_image(self, boxes, image, j):
         ymin, xmin, ymax, xmax = tf.unstack(tf.cast(boxes[self._patch_counter], tf.int32))
-        idx = tf.stack(tf.meshgrid(tf.range(ymin, ymax), tf.range(xmin, xmax), indexing='ij'),
-                       axis=-1)
 
         patch_bg = image[ymin: ymax, xmin: xmax]
-        patch_bg, scale = self.preprocessing(patch_bg)
-        im = self._patch(patch_bg[tf.newaxis])[0]
-        self.loss.assign_add(tf.reduce_mean((im - patch_bg) ** 2.))
-        im = self.postprocessing(im, scale)
+        patch_bg = self.preprocessing(patch_bg)
+        im, scale = self._patch(patch_bg[tf.newaxis])
+        im, scale = tf.squeeze(im), tf.squeeze(scale)
+        im = self.random_print_adjust(im)
+        self.loss[self._batch_counter].assign(scale + self.loss[self._batch_counter])
 
-        h, w = ymax - ymin, xmax - xmin
-        im = im[:h, :w]
+        patch_coords = tf.squeeze(self.create(image, scale, boxes[self._patch_counter]))
+        image = self.add_patch_to_image_helper(patch_coords, im, image)
 
-        image = tf.tensor_scatter_nd_update(image, idx, im)
-        image = tf.clip_by_value(image, -1, 1.)
         self._patch_counter.assign_add(tf.constant(1))
         return [image, self._patch_counter]
+
+    def random_print_adjust(self, patch):
+        w = tf.random.normal((1, 1, 3), .5, .1)
+        b = tf.random.normal((1, 1, 3), 0., .01)
+        return tf.clip_by_value(w * patch + b, -1., 1.)
 
     def preprocessing(self, image):
         input_processor = dataloader.DetectionInputProcessor(image, 128)
         input_processor.set_scale_factors_to_output_size()
         image = input_processor.resize_and_crop_image()
-        image_scale = input_processor.image_scale_to_original
-        return image, image_scale
+        return image
 
-    def postprocessing(self, image, scale):
-        h, w, _ = tf.unstack(tf.shape(image))
-        bounds = tf.cast(tf.stack([h, w]), tf.float32)
-        bounds *= scale
-        return tf.image.resize(image, tf.cast(tf.math.ceil(bounds), tf.int32))
+    def add_patch_to_image_helper(self, box, patch, image):
+        ymin_patch, xmin_patch, patch_h, patch_w, diag = tf.unstack(tf.cast(box, tf.int32))
+        ymax_patch = ymin_patch + diag
+        xmax_patch = xmin_patch + diag
+        idx = tf.stack(tf.meshgrid(tf.range(ymin_patch, ymax_patch), tf.range(xmin_patch, xmax_patch), indexing='ij'),
+                       axis=-1)
+
+        im = tf.image.resize(patch, tf.stack([patch_h, patch_w]), antialias=True)
+        im += tf.random.uniform(shape=tf.shape(im), minval=-.01, maxval=.01)
+        im = tf.image.random_brightness(im, .3)
+        im = tf.clip_by_value(im, -1., 1.)
+
+        offset = (diag - patch_h) / 2
+        top = left = tf.cast(tf.math.floor(offset), tf.int32)
+        bottom = right = tf.cast(tf.math.ceil(offset), tf.int32)
+        pads = tf.reshape(tf.stack([top, bottom, left, right, 0, 0]), (-1, 2))
+        im = tf.pad(im, pads, constant_values=-2)
+        angle = tf.random.uniform(shape=(), minval=-20. * np.pi / 180., maxval=20. * np.pi / 180.)
+        im = tfa.image.rotate(im, angle, interpolation='bilinear', fill_value=-2.)
+        patch_bg = image[ymin_patch: ymax_patch, xmin_patch: xmax_patch]
+        # tf.print(tf.shape(im), tf.shape(patch_bg))
+        im = tf.where(tf.less(im, -1.), patch_bg, im)
+        im = tf.clip_by_value(im, -1., 1.)
+
+        image = tf.tensor_scatter_nd_update(image, idx, im)
+        return image
+
+    def create(self, image, scale, item):
+        ymin, xmin, ymax, xmax = tf.unstack(item, 4)
+
+        h = ymax - ymin
+        w = xmax - xmin
+
+        longer_side = tf.maximum(h, w)
+        tolerance = .2
+
+        patch_size = tf.floor(longer_side * scale)
+        diag = tf.minimum((2. ** .5) * patch_size, tf.cast(image.shape[1], tf.float32))
+        # tf.print(patch_size)
+
+        orig_y = ymin + h / 2. + tf.random.uniform((), minval=-tolerance * h / 2., maxval=tolerance * h / 2.)
+        orig_x = xmin + w / 2. + tf.random.uniform((), minval=-tolerance * w / 2., maxval=tolerance * w / 2.)
+
+        patch_w = patch_size
+        patch_h = patch_size
+
+        ymin_patch = tf.maximum(orig_y - diag / 2., 0.)
+        xmin_patch = tf.maximum(orig_x - diag / 2., 0.)
+
+        shape = tf.cast(tf.shape(image), tf.float32)
+        ymin_patch = tf.cond(tf.greater(ymin_patch + diag, shape[0]),
+                             lambda: shape[0] - diag, lambda: ymin_patch)
+        xmin_patch = tf.cond(tf.greater(xmin_patch + diag, shape[1]),
+                             lambda: shape[1] - diag, lambda: xmin_patch)
+
+        return tf.stack([ymin_patch, xmin_patch, patch_h, patch_w, diag])
 
     def call(self, inputs):
         self._boxes, images = inputs
-        self.loss.assign(tf.constant(0.))
+        zeros = tf.zeros(tf.shape(images)[0], dtype=tf.float32)
+        if self.loss is None:
+            self.loss = tf.Variable(zeros, trainable=False)
+        else:
+            self.loss.assign(zeros)
         self._batch_counter.assign(tf.constant(0))
-        return tf.map_fn(self.add_patches_to_image, images,
-                         fn_output_signature=(tf.TensorSpec(dtype=tf.float32, shape=images[0].shape),
-                                              tf.TensorSpec(dtype=tf.float32, shape=())))
+        return tf.map_fn(self.add_patches_to_image, images), self.loss.value()

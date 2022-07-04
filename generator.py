@@ -6,7 +6,7 @@ Created: April 28, 2022
 Purpose: patch generator
 """
 from keras.backend import concatenate
-from keras.layers import Layer, BatchNormalization, Activation, Dropout, Dense, Add, Multiply
+from keras.layers import Layer, BatchNormalization, Activation, Dropout, Dense, Add, Multiply, Flatten
 from keras.layers.convolutional import Conv2D, Conv2DTranspose
 from keras.layers.pooling import MaxPooling2D
 from keras.models import Model
@@ -14,9 +14,9 @@ from keras.models import Model
 import utils
 
 
-class NoiseGenerator(Model):
+class UNetBackBone(Model):
     def __init__(self, *args, n_filters=8, dropout=.2, batchnorm=True, **kwargs):
-        super().__init__(*args, **kwargs, name='generator')
+        super().__init__(*args, **kwargs)
         self.conv_blocks = [Conv2DBlock(name=f'conv{i}', n_filters=n_filters * (2 ** i), batchnorm=batchnorm,
                                         dropout=dropout)
                             for i in range(4)]
@@ -30,9 +30,7 @@ class NoiseGenerator(Model):
                                                            batchnorm=batchnorm, dropout=dropout))
             m /= 2
 
-        self.op = Conv2D(3, (1, 1), activation='tanh', name='output', kernel_initializer='he_normal')
-
-    def call(self, inputs, training=False):
+    def call(self, inputs, training=False, return_encs=False):
         x = inputs
         encs = []
         for layer in self.conv_blocks:
@@ -43,7 +41,37 @@ class NoiseGenerator(Model):
         encs = encs[::-1]
         for enc, layer in zip(encs, self.deconv_blocks):
             x = layer([x, enc], training=training)
+        if return_encs:
+            return x, encs
+        return x
+
+
+class NoiseGenerator(UNetBackBone):
+    def __init__(self, *args, **kwargs):
+        name = 'noise_generator'
+        super().__init__(*args, **kwargs, name=name)
+        self.op = Conv2D(3, (1, 1), activation='tanh', name=f'{name}/output', kernel_initializer='he_normal')
+
+    def call(self, inputs, training=False):
+        x = super().call(inputs, training=training)
         return self.op(x)
+
+
+class PatchGenerator(UNetBackBone):
+    def __init__(self, *args, **kwargs):
+        name = 'patch_generator'
+        super().__init__(*args, **kwargs, name=name)
+        self.op1 = Conv2D(3, (1, 1), activation='tanh', name=f'{name}/output', kernel_initializer='he_normal')
+        self.l1 = Flatten(name=f'{name}/flatten')
+        self.op2 = Dense(1, activation='sigmoid', name=f'{name}/dense', kernel_initializer='zeros')
+
+    def call(self, inputs, training=False):
+        x, encs = super().call(inputs, training=training, return_encs=True)
+        patch = self.op1(x)
+        enc = encs[0]
+        x = self.l1(enc)
+        scale = self.op2(x)
+        return patch, scale
 
 
 class AttentionBlock(Layer):
@@ -152,39 +180,16 @@ class Conv2DTransposeBlock(Layer):
         return x
 
 
-class ScaleGen(Model):
-    def __init__(self, *args, dropout=.05, **kwargs):
-        super().__init__(*args, **kwargs, name='generator')
-        self.l1 = Dense(128)
-        self.l2 = BatchNormalization()
-        self.l3 = Activation('leaky_relu')
-        self.l4 = Dropout(rate=dropout)
-        self.op = Dense(1, activation='sigmoid')
-
-    def call(self, dims, training=False):
-        x = self.l1(dims)
-        x = self.l2(x, training=training)
-        x = self.l3(x)
-        x = self.l4(x, training=training)
-        return self.op(x)
-
-
-def define_generator(image_size):
+def define_generator(image_size, cls):
     output_shape = utils.parse_image_size(image_size)
-    model = NoiseGenerator()
+    model = cls()
     model.build(input_shape=(None, *output_shape, 3))
-    return model
-
-
-def define_regressor():
-    model = ScaleGen()
-    model.build(input_shape=(None, 1))
     model.compile(run_eagerly=False)
     return model
 
 
 def main():
-    model = define_generator(640)
+    model = define_generator(128, PatchGenerator)
     model.summary()
 
 

@@ -39,7 +39,7 @@ class PatchAttackDefender(tf.keras.Model):
         self.config = self.model.config
         if config_override:
             self.model.config.override(config_override)
-        self._antipatch = generator.define_generator(self.config.image_size)
+        self._antipatch = generator.define_generator(self.config.image_size, generator.NoiseGenerator)
 
         if initial_weights is not None:
             self._antipatch.load_weights(initial_weights)

@@ -12,6 +12,7 @@ def allow_direct_imports_from(dirname):
     if dirname not in sys.path:
         sys.path.append(dirname)
 
+
 allow_direct_imports_from('automl/efficientdet')
 
 import os
@@ -64,7 +65,8 @@ def main(download_model=False):
                                                             options=None,
                                                             initial_value_threshold=None
                                                             ),
-                         tf.keras.callbacks.ReduceLROnPlateau(monitor='val_loss', verbose=1, factor=.5, min_lr=1e-5)
+                         tf.keras.callbacks.ReduceLROnPlateau(monitor='loss', verbose=1, factor=.5, min_lr=1e-4,
+                                                              patience=50)
                          ])
 
 

@@ -131,6 +131,11 @@ def partition(config, img_dir, label_dir, max_area_ratio=.1, train_split=0.9, va
 
     logger.info(f'training on {train_size} images, validating on {val_size}')
 
+    data_augmentation = tf.keras.Sequential([
+        tf.keras.layers.RandomFlip('horizontal'),
+        tf.keras.layers.RandomContrast(.2)
+    ])
+
     @tf.autograph.experimental.do_not_convert
     def get_tf_dataset(start, end, validation=False):
         output_size = utils.parse_image_size(config.image_size)
@@ -140,13 +145,10 @@ def partition(config, img_dir, label_dir, max_area_ratio=.1, train_split=0.9, va
                                                                                  dtype=tf.float32)
                                             ).batch(batch_size).prefetch(tf.data.AUTOTUNE)
         if not validation:
-            data_augmentation = tf.keras.Sequential([
-                tf.keras.layers.RandomFlip('horizontal'),
-                tf.keras.layers.RandomContrast(.5)
-            ])
             return ds.map(tf.image.random_flip_left_right). \
                 map(data_augmentation, num_parallel_calls=tf.data.AUTOTUNE). \
-                map(lambda im: tf.image.random_brightness(im, .2), num_parallel_calls=tf.data.AUTOTUNE)
+                map(lambda im: tf.image.random_brightness(im, .2), num_parallel_calls=tf.data.AUTOTUNE). \
+                map(lambda im: tf.clip_by_value(im, -1., 1.), num_parallel_calls=tf.data.AUTOTUNE)
         return ds
 
     train_ds = get_tf_dataset(0, train_size)

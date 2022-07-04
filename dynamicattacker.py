@@ -269,6 +269,7 @@ class Patcher(tf.keras.layers.Layer):
         im = tf.image.resize(patch, tf.stack([patch_h, patch_w]), antialias=True)
         im += tf.random.uniform(shape=tf.shape(im), minval=-.01, maxval=.01)
         im = tf.image.random_brightness(im, .3)
+        im = tf.clip_by_value(im, -1., 1.)
 
         offset = (diag - patch_h) / 2
         top = left = tf.cast(tf.math.floor(offset), tf.int32)
