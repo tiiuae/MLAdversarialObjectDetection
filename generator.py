@@ -30,7 +30,7 @@ class UNetBackBone(Model):
                                                            batchnorm=batchnorm, dropout=dropout))
             m /= 2
 
-    def call(self, inputs, training=False, return_encs=False):
+    def call(self, inputs, training=False):
         x = inputs
         encs = []
         for layer in self.conv_blocks:
@@ -41,8 +41,6 @@ class UNetBackBone(Model):
         encs = encs[::-1]
         for enc, layer in zip(encs, self.deconv_blocks):
             x = layer([x, enc], training=training)
-        if return_encs:
-            return x, encs
         return x
 
 
@@ -61,17 +59,12 @@ class PatchGenerator(UNetBackBone):
     def __init__(self, *args, **kwargs):
         name = 'patch_generator'
         super().__init__(*args, **kwargs, name=name)
-        self.op1 = Conv2D(3, (1, 1), activation='tanh', name=f'{name}/output', kernel_initializer='he_normal')
-        self.l1 = Flatten(name=f'{name}/flatten')
-        self.op2 = Dense(1, activation='sigmoid', name=f'{name}/dense', kernel_initializer='zeros')
+        self.op = Conv2D(3, (1, 1), activation='tanh', name=f'{name}/output', kernel_initializer='he_normal')
 
     def call(self, inputs, training=False):
-        x, encs = super().call(inputs, training=training, return_encs=True)
-        patch = self.op1(x)
-        enc = encs[0]
-        x = self.l1(enc)
-        scale = self.op2(x)
-        return patch, scale
+        x = super().call(inputs, training=training)
+        patch = self.op(x)
+        return patch
 
 
 class AttentionBlock(Layer):

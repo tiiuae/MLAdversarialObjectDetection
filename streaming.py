@@ -36,6 +36,12 @@ class Stream:
             if sort_func:
                 self.files.sort(key=sort_func)
 
+    def change_frame_size(self, frame):
+        h, w, _ = frame.shape
+        scale = self.set_width / w
+        h *= scale
+        return cv2.resize(frame, (self.set_width, int(h)))
+
     def play_from_video(self):
         try:
             while self.cap.isOpened():
@@ -44,10 +50,8 @@ class Stream:
                     logger.info('end of steam')
                     break
                 frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                h, w, _ = frame.shape
-                scale = self.set_width / w
-                h *= scale
-                frame = cv2.resize(frame, (self.set_width, int(h)))
+                if self.set_width:
+                    frame = self.change_frame_size(frame)
                 yield frame
         finally:
             self.cap.release()
@@ -57,10 +61,8 @@ class Stream:
             time.sleep(1/24)
             file = os.path.join(self.path, file)
             frame = np.asarray(Image.open(file).convert('RGB'))
-            h, w, _ = frame.shape
-            scale = self.set_width / w
-            h *= scale
-            frame = cv2.resize(frame, (self.set_width, int(h)))
+            if self.set_width:
+                frame = self.change_frame_size(frame)
             yield frame
 
     def play(self):

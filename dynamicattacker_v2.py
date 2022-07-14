@@ -115,22 +115,21 @@ class DynamicPatchAttacker(tf.keras.Model):
         boxes, scores = self.first_pass(images)
 
         with tf.GradientTape() as tape:
-            images, mean_scales = self._patcher([boxes, images])
+            images = self._patcher([boxes, images])
             boxes_pred, scores_pred, classes = self.second_pass(images)
-            max_scores = tf.maximum(tf.reduce_max(scores_pred, axis=1), 0.)
-            scale_losses = (max_scores - mean_scales) ** 2.
-            loss = tf.reduce_sum(max_scores ** 2. + scale_losses)
+            # scale_losses = (max_scores - mean_scales) ** 2.
+            loss = tf.reduce_sum(scores_pred ** 2.)
 
+        max_scores = tf.maximum(tf.reduce_max(scores_pred, axis=1), 0.)
         self.add_metric(loss, name='loss')
-        self.add_metric(tf.reduce_mean(mean_scales), name='mean_scale')
-        self.add_metric(tf.reduce_sum(scale_losses), name='scale_loss')
+        # self.add_metric(tf.reduce_mean(mean_scales), name='mean_scale')
+        # self.add_metric(tf.reduce_sum(scale_losses), name='scale_loss')
         self.add_metric(tf.reduce_mean(max_scores), name='mean_max_score')
         self.add_metric(tf.math.reduce_std(max_scores), name='std_max_score')
 
         boxes_pred, scores_pred = self._postprocessing(boxes_pred, scores_pred, classes)
         asr = self.calc_asr(scores, scores_pred, boxes, boxes_pred)
         self.add_metric(asr, name='asr')
-        self.add_metric(asr / tf.reduce_mean(mean_scales), name='asr_to_mean_scale')
 
         func = functools.partial(self.vis_images, images, boxes, scores, boxes_pred, scores_pred, training)
         tf.cond(tf.equal(tf.math.floormod(self.cur_step, self.visualize_freq), tf.constant(0, tf.int64)),
@@ -209,7 +208,6 @@ class Patcher(tf.keras.layers.Layer):
         self._batch_counter = tf.Variable(tf.constant(0), trainable=False)
         self._patch_counter = tf.Variable(tf.constant(0), trainable=False)
         self._boxes = None
-        self.loss = None
 
     def add_patches_to_image(self, image):
         h, w, _ = tf.unstack(tf.cast(tf.shape(image), tf.float32))
@@ -220,8 +218,6 @@ class Patcher(tf.keras.layers.Layer):
         image, _ = tf.while_loop(lambda image, j: tf.less(self._patch_counter, tf.shape(boxes)[0]),
                                  loop_fn, [image, self._patch_counter])
 
-        self.loss[self._batch_counter].assign(tf.math.divide_no_nan(self.loss[self._batch_counter],
-                                                                    tf.cast(self._patch_counter.value(), tf.float32)))
         self._batch_counter.assign_add(tf.constant(1))
         return image
 
@@ -230,12 +226,11 @@ class Patcher(tf.keras.layers.Layer):
 
         patch_bg = image[ymin: ymax, xmin: xmax]
         patch_bg = self.preprocessing(patch_bg)
-        im, scale = self._patch(patch_bg[tf.newaxis])
-        im, scale = tf.squeeze(im), tf.squeeze(scale)
+        im = self._patch(patch_bg[tf.newaxis])
+        im = tf.squeeze(im)
         im = self.random_print_adjust(im)
-        self.loss[self._batch_counter].assign(scale + self.loss[self._batch_counter])
 
-        patch_coords = tf.squeeze(self.create(image, scale, boxes[self._patch_counter]))
+        patch_coords = tf.squeeze(self.create(image, boxes[self._patch_counter]))
         image = self.add_patch_to_image_helper(patch_coords, im, image)
 
         self._patch_counter.assign_add(tf.constant(1))
@@ -279,7 +274,7 @@ class Patcher(tf.keras.layers.Layer):
         image = tf.tensor_scatter_nd_update(image, idx, im)
         return image
 
-    def create(self, image, scale, item):
+    def create(self, image, item):
         ymin, xmin, ymax, xmax = tf.unstack(item, 4)
 
         h = ymax - ymin
@@ -288,7 +283,7 @@ class Patcher(tf.keras.layers.Layer):
         longer_side = tf.maximum(h, w)
         tolerance = .2
 
-        patch_size = tf.floor(longer_side * scale)
+        patch_size = tf.floor(longer_side * .3)
         diag = tf.minimum((2. ** .5) * patch_size, tf.cast(image.shape[1], tf.float32))
         # tf.print(patch_size)
 
@@ -311,10 +306,5 @@ class Patcher(tf.keras.layers.Layer):
 
     def call(self, inputs):
         self._boxes, images = inputs
-        zeros = tf.zeros(tf.shape(images)[0], dtype=tf.float32)
-        if self.loss is None:
-            self.loss = tf.Variable(zeros, trainable=False)
-        else:
-            self.loss.assign(zeros)
         self._batch_counter.assign(tf.constant(0))
-        return tf.map_fn(self.add_patches_to_image, images), self.loss.value()
+        return tf.map_fn(self.add_patches_to_image, images)
