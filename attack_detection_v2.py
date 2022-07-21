@@ -325,8 +325,8 @@ class Masker(tf.keras.layers.Layer):
             patches = tf.random.shuffle(images[:, :240, :240, :])
             patches = tf.image.random_flip_left_right(patches)
             patches = tf.image.random_flip_up_down(patches)
-            patches = tf.image.adjust_contrast(patches, 2.)
-            patches = tf.image.adjust_saturation(patches, 2.)
+            # patches = tf.image.adjust_contrast(patches, 2.)
+            # patches = tf.image.adjust_saturation(patches, 2.)
             self._train_patches = patches
         else:
             self._train_patches = None

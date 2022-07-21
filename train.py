@@ -5,28 +5,20 @@ Created: June 15, 2022
 
 Purpose: replaces jupyter based training
 """
-
-
-def allow_direct_imports_from(dirname):
-    import sys
-    if dirname not in sys.path:
-        sys.path.append(dirname)
-
-
-allow_direct_imports_from('automl/efficientdet')
+import util
+util.allow_direct_imports_from('automl/efficientdet')
 
 import os
 import tensorflow as tf
 
 import dynamicattacker as attacker
 import train_data_generator
-import util
 
 MODEL = 'efficientdet-lite4'
 
 
 def main(download_model=False):
-    log_dir = util.ensure_empty_dir('log_dir/atk_new_data')
+    log_dir = util.ensure_empty_dir('log_dir/atk_new_tv')
     gpu = tf.config.list_physical_devices('GPU')[0]
     tf.config.experimental.set_memory_growth(gpu, True)
 
@@ -49,7 +41,7 @@ def main(download_model=False):
                                                  update_freq='epoch')
     model.tb = tb_callback
 
-    save_dir = util.ensure_empty_dir('save_dir_new_data')
+    save_dir = util.ensure_empty_dir('save_dir_new_tv')
     save_file = 'patch_{epoch:02d}_{val_asr_to_scale:.4f}'
     model.fit(train_ds, validation_data=val_ds, epochs=500, steps_per_epoch=train_len,
               # initial_epoch=12,

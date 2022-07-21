@@ -5,27 +5,20 @@ Created: June 19, 2022
 
 Purpose: replace jupyter based training for defender
 """
-
-
-def allow_direct_imports_from(dirname):
-    import sys
-    if dirname not in sys.path:
-        sys.path.append(dirname)
-
-allow_direct_imports_from('automl/efficientdet')
+import util
+util.allow_direct_imports_from('automl/efficientdet')
 
 import os
 import tensorflow as tf
 
 import attack_detection_v2 as defender
 import train_data_generator
-import util
 
 MODEL = 'efficientdet-lite4'
 
 
 def main(download_model=False):
-    log_dir = util.ensure_empty_dir('log_dir/defence')
+    log_dir = util.ensure_empty_dir('log_dir/defence_imp')
     gpu = tf.config.list_physical_devices('GPU')[0]
     tf.config.experimental.set_memory_growth(gpu, True)
 
@@ -33,7 +26,7 @@ def main(download_model=False):
     config_override = {'nms_configs': {'iou_thresh': .5, 'score_thresh': .5}}
     model = defender.PatchAttackDefender(victim_model,
                                           # initial_weights='save_dir/patch_04_0.5024',
-                                         eval_patch_weights='save_dir_max_score/patch_169_0.8028',
+                                         eval_patch_weights='save_dir_new_data/patch_434_2.1692',
                                          config_override=config_override,
                                          visualize_freq=50)
     model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=1e-2), run_eagerly=False)
@@ -50,7 +43,7 @@ def main(download_model=False):
                                                  update_freq='epoch')
     model.tb = tb_callback
 
-    save_dir = util.ensure_empty_dir('save_dir')
+    save_dir = util.ensure_empty_dir('save_dir_def_imp')
     save_file = 'patch_{epoch:02d}_{val_loss:.4f}'
     model.fit(train_ds, validation_data=val_ds, epochs=200, steps_per_epoch=train_len,
               # initial_epoch=12,
@@ -66,7 +59,7 @@ def main(download_model=False):
                                                             options=None,
                                                             initial_value_threshold=None
                                                             ),
-                         tf.keras.callbacks.ReduceLROnPlateau(monitor='loss', verbose=1, factor=.5, min_lr=1e-5)
+                         tf.keras.callbacks.ReduceLROnPlateau(monitor='loss', verbose=1, factor=.5, min_lr=1e-4)
                          ])
 
 

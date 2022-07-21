@@ -9,6 +9,13 @@
           </advancedOptions>
         </fileTransfer>
       </webServer>
+      <webServer id="20e3ae1c-7844-4d30-8366-99a1303568cc" name="mluser@ssrc02">
+        <fileTransfer rootFolder="/home/mluser/saurabh/phyadv" accessType="SFTP" host="172.31.107.252" port="22" sshConfigId="41c408c2-e3d4-45fd-831b-d4326cecefd9" sshConfig="mluser@172.31.107.252:22 password">
+          <advancedOptions>
+            <advancedOptions dataProtectionLevel="Private" keepAliveTimeout="0" passiveMode="true" shareSSLContext="true" />
+          </advancedOptions>
+        </fileTransfer>
+      </webServer>
     </option>
   </component>
 </project>

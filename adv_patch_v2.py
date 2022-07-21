@@ -5,8 +5,11 @@ Created: 31 March, 2022
 
 Purpose: Adversarial patch creation based on bounding box
 """
+import math
+
 import cv2
 import numpy as np
+import scipy.ndimage
 from PIL import Image
 
 
@@ -41,6 +44,7 @@ class AdversarialPatch:
         return np.clip(patch, 0., 255.).astype('uint8')
 
     def _create(self, img, bbox):
+        img_h, img_w, _ = img.shape
         ymin, xmin, ymax, xmax = bbox
         h, w = ymax - ymin, xmax - xmin
 
@@ -49,20 +53,21 @@ class AdversarialPatch:
         patch_w = int(long_side * self.scale)
         patch_h = patch_w
 
+        diag = min((2. ** .5) * patch_w, img_w)
+
         orig_y = ymin + h / 2.
         orig_x = xmin + w / 2.
 
         ymin_patch = max(orig_y - patch_h / 2., 0.)
         xmin_patch = max(orig_x - patch_w / 2., 0.)
 
-        img_h, img_w, _ = img.shape
-        if ymin_patch + patch_h > img_h:
-            ymin_patch = img_h - patch_h
+        if ymin_patch + diag > img_h:
+            ymin_patch = img_h - diag
 
-        if xmin_patch + patch_w > img_w:
-            xmin_patch = img_w - patch_w
+        if xmin_patch + diag > img_w:
+            xmin_patch = img_w - diag
 
-        return list(map(int, (ymin_patch, xmin_patch, patch_h, patch_w)))
+        return list(map(int, (ymin_patch, xmin_patch, patch_h, patch_w, diag)))
 
     def add_gray(self, image):
         h, w, c = image.shape
@@ -110,22 +115,36 @@ class AdversarialPatch:
     def get_transformed_patch(self, img, patch_h, patch_w):
         patch = self.brightness_match(img)
         patch = self.resize(patch, patch_h, patch_w)
-        # patch = patch - self.mean_rgb
-        # patch /= self.stddev_rgb
-        # patch = self.random_noise(patch, .01)
+        patch = patch - self.mean_rgb
+        patch /= self.stddev_rgb
+        patch = self.random_noise(patch, .01)
         # patch = self.random_brightness(patch, .3)
-        # patch *= self.stddev_rgb
-        # patch += self.mean_rgb
-        return patch
-        # return np.clip(patch, 0., 255.).astype('uint8')
+        patch *= self.stddev_rgb
+        patch += self.mean_rgb
+        # return patch
+        return np.clip(patch, None, 255.).astype(int)
 
     def add_adv_to_img(self, img: np.ndarray, bboxes):
         img = img.copy()
         for bbox in bboxes:
-            ymin_patch, xmin_patch, patch_h, patch_w = self._create(img, bbox)
+            ymin_patch, xmin_patch, patch_h, patch_w, diag = self._create(img, bbox)
+            ymax_patch = ymin_patch + diag
+            xmax_patch = xmin_patch + diag
             patch = self.get_transformed_patch(img, patch_h, patch_w)
-            img[ymin_patch: ymin_patch + patch_h, xmin_patch: xmin_patch + patch_w] = patch
-        return img
+
+            patch = scipy.ndimage.rotate(patch, 5, cval=-256)
+            patch_h, patch_w, _ = patch.shape
+            pads = (diag - patch_h) / 2
+            top = left = math.floor(pads)
+            bottom = right = math.ceil(pads)
+            pads = [[top, bottom], [left, right], [0, 0]]
+
+            patch = np.pad(patch, pads, constant_values=-256)
+            patch_bg = img[ymin_patch: ymax_patch, xmin_patch: xmax_patch].copy()
+            img_affected = img[ymin_patch: ymax_patch, xmin_patch: xmax_patch] = patch
+            img_affected = np.where(img_affected < 0, patch_bg, img_affected)
+            img[ymin_patch: ymax_patch, xmin_patch: xmax_patch] = img_affected
+        return img.astype('uint8')
 
 
 def main():

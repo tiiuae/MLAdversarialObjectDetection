@@ -15,7 +15,15 @@ import requests
 import shapely.geometry
 import tensorflow as tf
 
-from tf2 import infer_lib
+
+def allow_direct_imports_from(dirname):
+    import sys
+    if dirname not in sys.path:
+        sys.path.append(dirname)
+
+
+allow_direct_imports_from('automl/efficientdet')
+from automl.efficientdet.tf2 import infer_lib
 from visualize.vis_utils import draw_bounding_box_on_image_array
 
 
@@ -143,13 +151,6 @@ def centre_loss(delta):
     wind -= .5 * w
     se = tf.math.square(hind) + tf.math.square(wind)
     return tf.reduce_max(se)
-
-
-def tv_loss(tensors):
-    """TV loss"""
-    strided = tensors[-1:, :-1]
-    return tf.reduce_mean(((strided - tensors[-1:, 1:]) ** 2. +
-                          (strided - tensors[1:, :-1]) ** 2.) ** .5)
 
 @tf.function
 def cmyk_to_rgb(patch):

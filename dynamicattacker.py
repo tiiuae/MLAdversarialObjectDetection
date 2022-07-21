@@ -17,6 +17,7 @@ from matplotlib import pyplot as plt
 from tifffile import tifffile
 
 import histogram_matcher
+import util
 from tf2 import postprocess, efficientdet_keras
 
 
@@ -128,11 +129,13 @@ class DynamicPatchAttacker(tf.keras.Model):
             boxes_pred, scores_pred, classes = self.second_pass(images)
             max_scores = tf.maximum(tf.reduce_max(scores_pred, axis=1), 0.)
             scale_losses = (max_scores - self._scale_regressor) ** 2.
-            loss = tf.reduce_sum(max_scores ** 2. + scale_losses)
+            tv_loss = tf.image.total_variation(self._patch.value())
+            loss = tf.reduce_sum(max_scores ** 2. + scale_losses) + 1e-4 * tv_loss
 
         self.add_metric(loss, name='loss')
         self.add_metric(self._scale_regressor.value(), name='scale')
         self.add_metric(tf.reduce_sum(scale_losses), name='scale_loss')
+        self.add_metric(tv_loss, name='tv_loss')
         self.add_metric(tf.reduce_mean(max_scores), name='mean_max_score')
         self.add_metric(tf.math.reduce_std(max_scores), name='std_max_score')
 

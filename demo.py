@@ -57,7 +57,7 @@ class Demo:
         util.puttext(frame, f'average obj. detection score:'
                             f'{mean_sc}%', (title_pos_w, title_pos_h + self.offset), **self.txt_kwargs)
         frame = util.draw_boxes(frame, bb, sc1)
-        return frame, bb, max(sc) * 100. if len(sc) else -1.
+        return frame, bb, max(sc) * 100. if len(sc) else 0.
 
 
 class AttackDemo(Demo):
@@ -107,7 +107,7 @@ class RecoveryDemo(Demo):
         recovered_frame = np.clip(self.serve(mal_frame[np.newaxis]), 0., 255.).astype('uint8')
         recovered_frame, _, sc_after = super().run(recovered_frame)
         thresh = int(self.min_score_thresh * 100.)
-        if sc > -1. and osc > thresh:
+        if osc > thresh:
             score_recovery = sc_after - sc
             self._diff_queue.append(score_recovery)
             util.puttext(recovered_frame, f'attack detection rate: {self.calc_adr()}%', (180, 30), **self.txt_kwargs)
@@ -222,7 +222,7 @@ def main(input_file=None, save_file=None, live=False):
     demo_clean = Demo('clean', dct, 30, frame.shape[0] - 40)
     demo_patch = AttackDemo(patch, 'adv. patch', dct, 250, frame.shape[0] - 40)
     demo_rnd_patch = AttackDemo(rand_patch, 'random patch (as baseline)', dct, 30, frame.shape[0] - 40)
-    demo_recovery = RecoveryDemo('det/save_dir_attention/patch_200_0.0676/antipatch.h5', patch, 'recovery', dct, 30,
+    demo_recovery = RecoveryDemo('det/save_dir_attention/patch_193_0.0484/antipatch.h5', patch, 'recovery', dct, 30,
                                  frame.shape[0] - 40)
 
     if live:
@@ -289,7 +289,7 @@ def main(input_file=None, save_file=None, live=False):
 
 
 if __name__ == '__main__':
-    main(input_file='eduardo_flying',  # change to a mp4 file or None for webcam stream
-         save_file='out111.mp4',  # change to a mp4 file or None for no save
+    main(input_file='pics/demo_input.mp4',  # change to a mp4 file or None for webcam stream
+         # save_file='out111.mp4',  # change to a mp4 file or None for no save
          live=True  # True if wish to see live streaminq
          )
