@@ -130,7 +130,7 @@ class DynamicPatchAttacker(tf.keras.Model):
             max_scores = tf.maximum(tf.reduce_max(scores_pred, axis=1), 0.)
             scale_losses = (max_scores - self._scale_regressor) ** 2.
             tv_loss = tf.image.total_variation(self._patch.value())
-            loss = tf.reduce_sum(max_scores ** 2. + scale_losses) + 1e-4 * tv_loss
+            loss = tf.reduce_sum(max_scores ** 2. + scale_losses) + 1e-5 * tv_loss
 
         self.add_metric(loss, name='loss')
         self.add_metric(self._scale_regressor.value(), name='scale')
