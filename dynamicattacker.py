@@ -16,7 +16,7 @@ import tfplot
 from matplotlib import pyplot as plt
 from tifffile import tifffile
 
-import histogram_matcher
+import brightness_matcher
 import util
 from tf2 import postprocess, efficientdet_keras
 

@@ -11,7 +11,7 @@ util.allow_direct_imports_from('automl/efficientdet')
 import os
 import tensorflow as tf
 
-import attack_detection_v2 as defender
+import attack_detection as defender
 import train_data_generator
 
 MODEL = 'efficientdet-lite4'
