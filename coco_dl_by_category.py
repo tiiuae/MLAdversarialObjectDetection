@@ -3,8 +3,8 @@
 Author(s): saurabh.pathak@tii.ae
 Created: April 01, 2022
 
-Purpose: async parallel download image files and annotations from COCO containing only a given category (eg. persons)
-and save labels in [ymin, xmin, ymax, xmax] txt format
+Purpose: standalone module. async parallel download image files and annotations from COCO containing only a given
+category (eg. persons) and save labels in [ymin, xmin, ymax, xmax] txt format
 """
 import asyncio
 import os
@@ -21,6 +21,12 @@ def truncate(n, decimals=0):
 
 
 async def get_image(session, im_def, filename):
+    """
+    async function to query image from COCO url
+    :param session: session
+    :param im_def: image definition from the dataset description containing its url
+    :param filename: filename to save in
+    """
     async with session.get(im_def['coco_url']) as resp:
         if resp.status == 200:
             async with aiofiles.open(filename, mode='wb') as f:
@@ -50,13 +56,18 @@ async def main():
 
     # Comment this entire section out if you don't want to download the images
     filenames = [os.path.join(download_dir, im['file_name']) for im in images]
+
+    # filter images which have been already downloaded to save time if earlier run was interrupted
     dl_images = [im for im, filename in zip(images, filenames)
                  if not os.path.isfile(filename) or not os.path.getsize(filename)]
     print('will download', len(dl_images), 'images')
+
+    # download in parallel async requests to download_dir
     async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(limit=50)) as session:
         await asyncio.gather(*[get_image(session, im, os.path.join(download_dir, im['file_name']))
                                for im in dl_images])
 
+    # write label files to labels_dir
     for im in images:
         ann_ids = coco.getAnnIds(imgIds=im['id'], catIds=cat_ids, iscrowd=None)
         anns = coco.loadAnns(ann_ids)

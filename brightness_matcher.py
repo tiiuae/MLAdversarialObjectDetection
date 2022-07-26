@@ -3,7 +3,8 @@
 Author(s): saurabh.pathak@tii.ae
 Created: April 19, 2022
 
-Purpose: match histograms in tensorflow
+Purpose: match scene brightness of patch with target image. This is done by converting RGB to YUV colormap and then
+performing intensity matching on Y channel before converting back to RGB. Done on GPU
 """
 import tensorflow as tf
 
@@ -11,78 +12,115 @@ import util
 
 
 class BrightnessMatcher(tf.keras.layers.Layer):
+    """match scene brightness to patch"""
+
     def __init__(self, *args, **kwargs):
+        """
+        init
+        :param args: super args
+        :param kwargs: super kwargs
+        """
         super().__init__(*args, trainable=False, **kwargs)
-        # self._writer = tf.summary.create_file_writer('log_dir')
 
     @staticmethod
     def _rescale_0_1(img):
+        """
+        rescale image between 0 and 1 from input image which is between -1 and 1
+        :param img: input image with intensity between -1 and 1
+        :return: rescaled image with intensity between 0 and 1
+        """
         return (img + tf.constant(1.)) * tf.constant(127. / 255.)
 
     @staticmethod
     def _rescale_back(img):
+        """
+        rescale image between -1 and 1 from input image which is between 0 and 1
+        :param img: input image with intensity between 0 and 1
+        :return: rescaled image with intensity between -1 and 1
+        """
         return img * tf.constant(255. / 127.) - tf.constant(1.)
 
     @tf.function
     def call(self, inputs, **kwargs):
+        """
+        called by outside class that wants to use brightness matching functionality
+        :param inputs: input image
+        :param kwargs: unused. kept for signature consistency
+        :return: intensity matched image
+        """
         src, tgt = inputs
+
+        # rescale
         src = self._rescale_0_1(src)
         tgt = self._rescale_0_1(tgt)
+
+        # convert to YUV colormap
         src = tf.image.rgb_to_yuv(src)
         tgt = tf.image.rgb_to_yuv(tgt)
 
+        # align distribution means on Y channel
         source, target = src[:, :, 0], tgt[:, :, 0]
         source_mean = tf.reduce_mean(source)
         target_mean = tf.reduce_mean(target)
         pxmap = tf.clip_by_value(source - source_mean + target_mean, 0., 1.)
+
+        # recombine and convert to RGB
         res = [pxmap, src[..., 1], src[..., 2]]
         res = tf.clip_by_value(tf.image.yuv_to_rgb(tf.stack(res, axis=2)), 0., 1.)
-        res = self._rescale_back(res)
 
-        # with self._writer.as_default():
-        #     tf.summary.image('adjusted', tf.cast(res * 127. + 127., tf.uint8)[tf.newaxis], step=0)
+        # rescale back
+        res = self._rescale_back(res)
         return res
 
 
 class HistogramMatcher(BrightnessMatcher):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, trainable=False, **kwargs)
-        # self._writer = tf.summary.create_file_writer('log_dir')
-
-    @staticmethod
-    def _rescale_0_1(img):
-        return (img + tf.constant(1.)) * tf.constant(127. / 255.)
-
-    @staticmethod
-    def _rescale_back(img):
-        return (img * tf.constant(255. / 127.)) - tf.constant(1.)
+    """
+    perform a more thorough histogram matching on the Y channel so the distribution of Y channel is aligned instead
+    of just the mean as is done by its superclass, the brightness matcher class
+    """
 
     @tf.function
     def call(self, inputs, **kwargs):
+        """
+        called by outside class that wants to use brightness matching functionality
+        :param inputs: input image
+        :param kwargs: unused. kept for signature consistency
+        :return: intensity matched image
+        """
         src, tgt = inputs
+
+        # rescale
         src = self._rescale_0_1(src)
         tgt = self._rescale_0_1(tgt)
+
+        # convert to YUV
         src = tf.image.rgb_to_yuv(src)
         tgt = tf.image.rgb_to_yuv(tgt)
+
         h, w, _ = tf.unstack(tf.shape(src))
         floating_space = tf.clip_by_value(tf.range(0., 1.00001, delta=1. / 255., dtype=tf.float32), 0., 1.)
 
+        # perform histogram specification on Y channel
         source, target = src[:, :, 0], tgt[:, :, 0]
         cdfsrc = self.equalize_histogram(source)
         cdftgt = self.equalize_histogram(target)
         pxmap = self.interpolate(cdftgt, floating_space, cdfsrc)
         pxmap = self.interpolate(floating_space, pxmap, tf.reshape(source, (h * w,)))
         pxmap = tf.reshape(pxmap, (h, w))
+
+        # recombine and convert to RGB
         res = [pxmap, src[..., 1], src[..., 2]]
         res = tf.clip_by_value(tf.image.yuv_to_rgb(tf.stack(res, axis=2)), 0., 1.)
         res = self._rescale_back(res)
-
-        # with self._writer.as_default():
-        #     tf.summary.image('adjusted', tf.cast(res * 127. + 127., tf.uint8)[tf.newaxis], step=0)
         return res
 
     @staticmethod
     def equalize_histogram(image):
+        """
+        equalize Y channel on the YUV image. part of histogram specification process
+        :param image: input image with Y channel only
+        :return: equalized Y channel
+        """
         values_range = tf.constant([0., 1.], dtype=tf.float32)
         histogram = tf.histogram_fixed_width(image, values_range, tf.constant(256))
         cdf = tf.cumsum(histogram)
@@ -95,6 +133,14 @@ class HistogramMatcher(BrightnessMatcher):
 
     @staticmethod
     def interpolate(dx_T, dy_T, x):
+        """
+        histogram specification require interpolation of intensity values. here I have manually implemented for tf
+        as tf does not have an inbuilt library function for histogram matching
+        :param dx_T: source cdf
+        :param dy_T: target cdf
+        :param x: interpolation points
+        :return: interpolated pixel intensity map
+        """
         with tf.name_scope('interpolate'):
             with tf.name_scope('neighbors'):
                 delVals = dx_T - x[:, tf.newaxis]
@@ -116,7 +162,8 @@ class HistogramMatcher(BrightnessMatcher):
         return values
 
 
-def main():
+def test():
+    """test only"""
     from PIL import Image
     import numpy as np
     burj1 = Image.open('burj_khalifa_day.jpg').convert('RGB').resize((640, 640))
@@ -147,4 +194,4 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    test()

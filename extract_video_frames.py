@@ -3,7 +3,7 @@
 Author(s): saurabh.pathak@tii.ae
 Created: July 14, 2022
 
-Purpose: extract frames from video
+Purpose: extract frames from video. standalone script
 """
 import pathlib
 
@@ -14,6 +14,7 @@ import util
 
 
 def main():
+    """main"""
     video_filename = 'pics/demo_input.mp4'
     tgt_dir = util.ensure_empty_dir(pathlib.Path('pics/extracted_frames'))
     cap = cv2.VideoCapture(video_filename)

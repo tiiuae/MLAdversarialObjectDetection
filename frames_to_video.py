@@ -3,16 +3,12 @@
 Author(s): saurabh.pathak@tii.ae
 Created: July 16, 2022
 
-Purpose: make frames from a directory into mp4 video.
+Purpose: make frames from a directory into mp4 video. standalone script
 """
 import cv2
 
+import demo_v2
 import streaming
-
-
-def write_frame(frame, video_writer):
-    frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-    video_writer.write(frame)
 
 
 def main(save_file, input_file=None):
@@ -28,7 +24,7 @@ def main(save_file, input_file=None):
     try:
         for i, frame in enumerate(player):
             print(i+1)
-            write_frame(frame, out)
+            demo_v2.write_frame(frame, out)
     finally:
         out.release()
         player.close()

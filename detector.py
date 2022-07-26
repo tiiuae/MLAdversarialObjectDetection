@@ -3,7 +3,7 @@
 Author(s): saurabh.pathak@tii.ae
 Created: March 28, 2022
 
-Purpose: detection module
+Purpose: detection module. contains a class which can handle images and run the object detection during inference time
 """
 import cv2
 import numpy as np
@@ -18,7 +18,14 @@ logger = util.get_logger(__name__)
 
 class Detector:
     """Inference with efficientDet object detector"""
+
     def __init__(self, *, params, download_model=False, **kwargs):
+        """
+        init
+        :param params: params to pass to object detection model driver encapsulated within this class
+        :param download_model: whether to download model if not present as {MODEL}.tgz file
+        :param kwargs: to pass to object detection driver
+        """
         if download_model:
             # Download checkpoint.
             util.download(MODEL)
@@ -26,6 +33,13 @@ class Detector:
         self.driver = infer_lib.KerasDriver(MODEL, debug=False, model_name=MODEL, model_params=params, **kwargs)
 
     def infer(self, frame, max_boxes=200):
+        """
+        basic inference on a single frame only outputs person detections. this also handles any pre and post processing
+        so input frame need not be preprocessed
+        :param frame: raw un-preprocessed frame
+        :param max_boxes: max number of detections per image to report
+        :return: bounding boxes array, scores array for person class
+        """
         raw_frames = np.array([frame])
         detections_bs = self.driver.serve(raw_frames)
         logger.debug([type(x) for x in detections_bs])
@@ -46,13 +60,20 @@ class Detector:
         return bb, sc
 
     def __call__(self, frame):
+        """
+        makes this object callable. calls the infer function when this object is called. but instead of returning the
+        boxes and scores, it draws the bounding boxes on top of the frame and returns the frame
+        :param frame: frame
+        :return: frame with detections overlaid
+        """
         bb, sc = self.infer(frame)
         bb, sc = util.filter_by_thresh(bb, sc, self.driver.model.config.nms_configs.score_thresh)
         frame = util.draw_boxes(frame, bb, sc)
         return frame
 
 
-def main():
+def test():
+    """test only"""
     import argparse
 
     parser = argparse.ArgumentParser(description='detector interface')
@@ -82,4 +103,4 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    test()

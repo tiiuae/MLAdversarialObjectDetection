@@ -3,7 +3,8 @@
 Author(s): saurabh.pathak@tii.ae
 Created: April 25, 2022
 
-Purpose: demonstrate the adversarial patch attack on person detection
+Purpose: demonstrate the adversarial patch attack on person detection and its detection and recovery mechanism as a
+single video output file containing graph and text overlays
 """
 import ast
 import logging
@@ -26,32 +27,52 @@ SCORE_THRESH = .55
 
 
 class Demo:
+    """demo superclass"""
+
     txt_kwargs = {'font': cv2.FONT_HERSHEY_TRIPLEX, 'font_scale': .7, 'font_color': (0, 0, 255), 'thickness': 1,
                   'line_type': 1}
 
     def __init__(self, name, dct: detector.Detector, tw, th, *, min_score_thresh=SCORE_THRESH):
+        """
+        init
+        :param name: name of the demo
+        :param dct: detector object to represent object detection model
+        :param tw: text location y to place text in video
+        :param th: text location x to place text in video
+        :param min_score_thresh: score threshold
+        """
         self.name = name
         self.dct_obj = dct
-        self._queue = []
+        self._sc_arr = []
         self.min_score_thresh = min_score_thresh
         self.title_pos = tw, th
         self.offset = 0
 
     def measure_mean_score(self, sc):
+        """
+        calculate mean of max score per image across all detections across all images seen
+        :param sc: array of scores for an image
+        :return: mean of max score per image between 0 and 100
+        """
         max_sc = max(sc) if len(sc) else 0.
-        self._add_item(max_sc)
-        return round(np.mean(self._queue) * 100.)
-
-    def _add_item(self, item):
-        self._queue.append(item)
+        self._sc_arr.append(max_sc)
+        return round(np.mean(self._sc_arr) * 100.)
 
     def run(self, frame):
+        """
+        run demo for given video frame
+        :param frame: frame
+        :return: frame with bounding boxes and text overlaid, bounding boxes, and maximum score in the frame
+        """
         self.offset = 0
         title_pos_w, title_pos_h = self.title_pos
         self.offset += 30
+
+        # call model inference
         bb, sc = self.dct_obj.infer(frame)
         mean_sc = self.measure_mean_score(sc)
 
+        # draw stuff on frame
         bb, sc1 = util.filter_by_thresh(bb, sc, self.min_score_thresh)
         util.puttext(frame, self.name, self.title_pos, **self.txt_kwargs)
         util.puttext(frame, f'average obj. detection score:'
@@ -61,19 +82,44 @@ class Demo:
 
 
 class AttackDemo(Demo):
+    """attack demo subclass"""
+
     def __init__(self, patch: adv_patch.AdversarialPatch, *args, **kwargs):
+        """
+        init
+        :param patch: AdversarialPatch object to represent the patch and its manipulations
+        :param args: super args
+        :param kwargs: super kwargs
+        """
         super().__init__(*args, **kwargs)
         self.patch_obj = patch
         self._atk_queue = []
 
     def calc_asr(self):
+        """
+        calculate attack success rate across all the images seen so far
+        :return: asr in 0 to 100 range
+        """
         thresh = int(self.min_score_thresh * 100.)
         success = len(list(filter(lambda x: x < thresh, self._atk_queue)))
         return round(success / len(self._atk_queue) * 100.)
 
     def run(self, frame, bb, osc):
+        """
+        run this demo on a given video frame
+        :param frame: frame
+        :param bb: bounding box of persons needed where to attack
+        :param osc: original score (from clean image)
+        :return: attacked frame, maximum score on this frame after the attack
+        """
+        # attack image
         mal_frame = self.patch_obj.add_adv_to_img(frame, bb)
+
+        # call object detection model
         mal_frame, _, sc = super().run(mal_frame)
+
+        # if original score was less than threshold then the clean image itself did not have any object else draw
+        # bounding boxes
         thresh = int(self.min_score_thresh * 100.)
         if sc > -1. and osc > thresh:
             self._atk_queue.append(sc)
@@ -89,23 +135,55 @@ class AttackDemo(Demo):
 
 
 class RecoveryDemo(Demo):
+    """defender demo subclass"""
+
     def __init__(self, weights_file, patch: adv_patch.AdversarialPatch, *args, **kwargs):
+        """
+        init
+        :param weights_file: defender model weight file - h5
+        :param patch: AdversarialPatch object to represent the patch and its manipulations
+        :param args: super args
+        :param kwargs: super kwargs
+        """
         super().__init__(*args, **kwargs)
         self.patch_obj = patch
         self.config = self.dct_obj.driver.model.config
-        self._antipatch = generator.define_generator(self.config.image_size, generator.NoiseGenerator)
+
+        # defender model
+        self._antipatch = generator.define_model(self.config.image_size, generator.PatchNeutralizer)
         self._antipatch.load_weights(weights_file)
+
         self._diff_queue = []
         self.atk_detection_thresh = 10.
 
     def calc_adr(self):
+        """
+        calculate attack detection rate across all the images seen so far
+        :return: adr between 0 and 100 range
+        """
         success = len(list(filter(lambda x: x > self.atk_detection_thresh, self._diff_queue)))
         return round(success / len(self._diff_queue) * 100.)
 
     def run(self, frame, bb, sc, osc):
+        """
+        run this demo for a given video frame
+        :param frame: frame
+        :param bb: person bounding box where to apply the attack
+        :param sc: object detection score after the attack
+        :param osc: object detection score before the attack
+        :return: recovered frame from the attack, max object detection score after the recovery (defence)
+        """
+        # attack image
         mal_frame = self.patch_obj.add_adv_to_img(frame, bb)
+
+        # run defender model on attacked image
         recovered_frame = np.clip(self.serve(mal_frame[np.newaxis]), 0., 255.).astype('uint8')
+
+        # run object detection model on recovered image
         recovered_frame, _, sc_after = super().run(recovered_frame)
+
+        # if original score was less than threshold then the clean image itself did not have any object else draw
+        # bounding boxes
         thresh = int(self.min_score_thresh * 100.)
         if osc > thresh:
             score_recovery = sc_after - sc
@@ -121,6 +199,11 @@ class RecoveryDemo(Demo):
         return recovered_frame, sc_after
 
     def serve(self, image_array):
+        """
+        run the defender model to restore the attacked areas in the image
+        :param image_array: array of 1 image to send to the model
+        :return: attack recovered image
+        """
         _, h, w, _ = image_array.shape
         image_array, scale = self.dct_obj.driver._preprocess(image_array)
         outputs = np.clip(2. * self._antipatch.predict(image_array) + image_array, -1., 1.)
@@ -130,11 +213,23 @@ class RecoveryDemo(Demo):
         oh, ow, _ = output.shape
         dsize = int(ow * scale), int(oh * scale)
         output = cv2.resize(output, dsize)
+
+        # remove gray band after rescaling to original size
         output = output[:h, :w]
         return output
 
 
 def make_graph(x, sc_clean, sc_random, sc_before, sc_after):
+    """
+    draw graph to put on the output video showing plots of respective object detection model scores, before attack,
+    after attack and after attack recovery
+    :param x: frame index
+    :param sc_clean: scores before attack
+    :param sc_random: scores after random patch attack
+    :param sc_before: scores after adv. patch attack
+    :param sc_after: scores after attack recovery
+    :return: matplotlib figure as a numpy rgb image array (to be put on video)
+    """
     x = np.array(x)
     sc_clean = np.array(sc_clean)
     sc_random = np.array(sc_random)
@@ -178,47 +273,37 @@ def make_graph(x, sc_clean, sc_random, sc_before, sc_after):
     return data
 
 
-def make_info_frame(info_frame):
-    title_pos_h, title_pos_w = 0, 10
-
-    def write(note, w_offset=0, h_offset=30):
-        nonlocal title_pos_w, title_pos_h
-        title_pos_h += h_offset
-        title_pos_w += w_offset
-        util.puttext(info_frame, note, (title_pos_w, title_pos_h), **Demo.txt_kwargs)
-
-    thresh = round(SCORE_THRESH * 100)
-    write('Note:')
-    write('Step 1: clean pass through image')
-    write('Step 2: on output of step 1, and on persons with scores more')
-    write(f'than {thresh}%:')
-    write('a: attack with pretrained adv. patch (100 epochs on COCO)', w_offset=30)
-    write('b: attack with random adv. patch')
-    write('Step 3: in each case, scores are calculated as:', w_offset=-30)
-    write('mean(max score per frame before thresholding) over last', w_offset=30)
-    write('10 frames seen')
-    write(f'Step 4: threshold and draw bounding boxes if score >= {thresh}%', w_offset=-30)
-    return info_frame
-
-
 def main(input_file=None, save_file=None, live=False):
+    """
+    run demos and put the results into a single video with graphs and text overlay
+    :param input_file: input mp4 video file or None for webcam stream or a directory containing images
+    :param save_file: output mp4 video filename or None for no save
+    :param live: whether to show live results on screen too as the output video is rendered or not
+    """
+    # init steam class for input flow
     stream = streaming.Stream(path=input_file, sort_func=lambda x: int(x[len('preview'):-len('.png')]))
+
+    # init object detection model and configs
     config_override = {'nms_configs': {'iou_thresh': .5, 'score_thresh': 0.}}
     dct = detector.Detector(params=config_override, download_model=False)
-    atk_dir = 'save_dir_new_data/patch_434_2.1692'
 
+    # load learned adv. patch and scale of patch relative to person bounding box length
+    atk_dir = 'save_dir_new_data/patch_434_2.1692'
     with open(os.path.join(atk_dir, 'scale.txt')) as f:
         scale = ast.literal_eval(f.read())
-        # scale = .5
 
+    # define patch manipulator objects for the adv. and random patches
     patch = adv_patch.AdversarialPatch(scale=scale, patch_file=os.path.join(atk_dir, 'patch.png'))
-
     rand_patch = adv_patch.AdversarialPatch(scale=scale)
 
+    # init stream player
     player = stream.play()
+
+    # determine output frame size
     frame = next(player)
     output_size = 2 * frame.shape[1], 2 * frame.shape[0]
 
+    # init demo objects
     demo_clean = Demo('clean', dct, 30, frame.shape[0] - 40)
     demo_patch = AttackDemo(patch, 'adv. patch', dct, 250, frame.shape[0] - 40)
     demo_rnd_patch = AttackDemo(rand_patch, 'random patch (as baseline)', dct, 30, frame.shape[0] - 40)
@@ -243,11 +328,11 @@ def main(input_file=None, save_file=None, live=False):
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         out = cv2.VideoWriter(save_file, fourcc, 8.0, output_size)
 
-    # info_frame = make_info_frame(np.zeros_like(frame))
     x, a, b, c, d = [], [], [], [], []
     winsize = 30
 
     try:
+        # play frames
         for i, frame in enumerate(player):
             ann_frame, bb, sc_clean = demo_clean.run(frame.copy())
             mal_frame, sc_before = demo_patch.run(frame.copy(), bb, sc_clean)
@@ -257,8 +342,11 @@ def main(input_file=None, save_file=None, live=False):
             dct_frame, sc_after = demo_recovery.run(frame, bb, sc_before, sc_clean)
 
             frame_bottom = np.concatenate([ctrl_frame, dct_frame], axis=1)
+
+            # make a single frame containing 4 concatenated results
             frame = np.concatenate([frame_top, frame_bottom])
 
+            # make graph
             x.append(i + 1)
             a.append(sc_clean)
             b.append(sc_random)
@@ -268,6 +356,8 @@ def main(input_file=None, save_file=None, live=False):
             data = make_graph(x, a, b, c, d)
 
             frame = cv2.resize(frame, output_size)
+
+            # put graph at the center of the video
             center = frame.shape[0] // 2, frame.shape[1] // 2
             width, height = 300, 250
             half_width, half_height = width // 2, height // 2
@@ -290,6 +380,6 @@ def main(input_file=None, save_file=None, live=False):
 
 if __name__ == '__main__':
     main(input_file='pics/demo_input.mp4',  # change to a mp4 file or None for webcam stream
-         # save_file='out111.mp4',  # change to a mp4 file or None for no save
+         save_file='out111.mp4',  # change to a mp4 file or None for no save
          live=True  # True if wish to see live streaminq
          )
