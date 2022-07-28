@@ -3,7 +3,6 @@
   <component name="ProjectModuleManager">
     <modules>
       <module fileurl="file://$PROJECT_DIR$/.idea/phyadv.iml" filepath="$PROJECT_DIR$/.idea/phyadv.iml" />
-      <module fileurl="file://$PROJECT_DIR$/../platform-ml-model-deployment/.idea/platform-ml-model-deployment.iml" filepath="$PROJECT_DIR$/../platform-ml-model-deployment/.idea/platform-ml-model-deployment.iml" />
     </modules>
   </component>
 </project>
