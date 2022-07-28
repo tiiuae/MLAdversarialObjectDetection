@@ -142,7 +142,6 @@ def filter_by_dims(img_dir, label_dir, max_area_ratio, filename):
     :param filename: image filename
     :return: False if at least one bounding box is over the max_area_ratio
     """
-    # return True
     im = _read_image(img_dir, filename)
     h, w, _ = im.shape
     filename = os.path.extsep.join([os.path.splitext(filename)[0], 'txt'])
@@ -159,7 +158,8 @@ def filter_by_dims(img_dir, label_dir, max_area_ratio, filename):
     return True
 
 
-def partition(config, img_dir, label_dir, max_area_ratio=.1, train_split=0.9, *, batch_size=2, shuffle=True):
+def partition(config, img_dir, label_dir, max_area_ratio=.1, train_split=0.9, *, batch_size=2, shuffle=True,
+              filter_data=False):
     """
     partition the dataset into train and validation set
     :param config: model configuration to read required image size from
@@ -169,18 +169,28 @@ def partition(config, img_dir, label_dir, max_area_ratio=.1, train_split=0.9, *,
     :param train_split: train set size relative to dataset size
     :param batch_size: batch size to use for creating tf.dataset optimizations
     :param shuffle: shuffle decision
+    :param filter_data: filter data by removing large bounding boxes if true
     :return: dictionary containing train and val sets and their respective batch lengths (i.e., number of steps per
     epoch)
     """
     # get val set size
     val_split = 1. - train_split
 
-    # filter dataset by size constraints
-    logger.info('filtering dataset by label constraints...')
-    func = functools.partial(filter_by_dims, img_dir, label_dir, max_area_ratio)
-    file_list = list(filter(func, os.listdir(img_dir)))
+    file_list = os.listdir(img_dir)
     ds_size = len(file_list)
-    logger.info(f'done. data size is {ds_size}')
+
+    if filter_data:
+        # filter dataset by size constraints
+        if label_dir is None:
+            logger.warning('no filtering done since label_dir is not provided')
+        else:
+            logger.info('filtering dataset by label constraints...')
+            func = functools.partial(filter_by_dims, img_dir, label_dir, max_area_ratio)
+            file_list = list(filter(func, os.listdir(img_dir)))
+            ds_size = len(file_list)
+            logger.info(f'done. data size is {ds_size}')
+    else:
+        logger.info(f'data size is {ds_size}')
 
     train_size = int(train_split * ds_size)
     val_size = int(val_split * ds_size)

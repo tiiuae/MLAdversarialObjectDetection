@@ -40,7 +40,7 @@ def main():
 
     # init datasets
     datasets: dict = train_data_generator.partition(model.config, 'downloaded_images', 'labels',
-                                                    batch_size=24, shuffle=True)
+                                                    batch_size=24, shuffle=True, filter_data=True)
     train_ds = datasets['train']['dataset']
     val_ds = datasets['val']['dataset']
     train_len = datasets['train']['length']

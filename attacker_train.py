@@ -20,7 +20,7 @@ MODEL = 'efficientdet-lite4'
 def main():
     """start attack training"""
     #  setup resources
-    log_dir = util.ensure_empty_dir('log_dir/atk_new_tv')
+    log_dir = util.ensure_empty_dir('log_dir/1atk_new_tv')
     gpu = tf.config.list_physical_devices('GPU')[0]
     tf.config.experimental.set_memory_growth(gpu, True)
 
@@ -40,14 +40,15 @@ def main():
     model.tb = tb_callback
 
     # init datasets
-    datasets: dict = train_data_generator.partition(model.config, 'train_eval', '', batch_size=12, shuffle=True)
+    datasets: dict = train_data_generator.partition(model.config, 'train_eval', None, batch_size=12, shuffle=True,
+                                                    filter_data=False)
     train_ds = datasets['train']['dataset']
     val_ds = datasets['val']['dataset']
     train_len = datasets['train']['length']
     val_len = datasets['val']['length']
 
     # init save dir
-    save_dir = util.ensure_empty_dir('save_dir_new_tv')
+    save_dir = util.ensure_empty_dir('1save_dir_new_tv')
     save_file = 'patch_{epoch:02d}_{val_asr_to_scale:.4f}'
 
     # train
