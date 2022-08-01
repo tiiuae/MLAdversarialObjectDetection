@@ -19,8 +19,10 @@ MODEL = 'efficientdet-lite4'
 
 def main():
     """start attack training"""
-    #  setup resources
-    log_dir = util.ensure_empty_dir('log_dir/1atk_new_tv')
+    # setup resources. change the below folder name where the outputs will be saved. a folder with this name will be
+    # created under the log_dir to store logs and another under save_dir to store weights during training
+    output_dirs_name = '1atk_new_tv'
+    log_dir = util.ensure_empty_dir(f'log_dir/{output_dirs_name}')
     gpu = tf.config.list_physical_devices('GPU')[0]
     tf.config.experimental.set_memory_growth(gpu, True)
 
@@ -48,7 +50,7 @@ def main():
     val_len = datasets['val']['length']
 
     # init save dir
-    save_dir = util.ensure_empty_dir('1save_dir_new_tv')
+    save_dir = util.ensure_empty_dir(f'save_dir/{output_dirs_name}')
     save_file = 'patch_{epoch:02d}_{val_asr_to_scale:.4f}'
 
     # train

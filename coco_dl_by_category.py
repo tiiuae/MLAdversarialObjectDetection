@@ -38,7 +38,7 @@ async def get_image(session, im_def, filename):
 
 async def main():
     """Download instances_train2017.json from the COCO website and put in the same directory as this script"""
-    coco = COCO('instances_val2017.json')
+    coco = COCO('instances_train2017.json')
     # cats = coco.loadCats(coco.getCatIds())
     # nms = [cat['name'] for cat in cats]
     # print('COCO categories: \n{}\n'.format(' '.join(nms)))
@@ -48,8 +48,8 @@ async def main():
     cat_ids = coco.getCatIds(catNms=[cat])
     img_ids = coco.getImgIds(catIds=cat_ids)
     images = coco.loadImgs(img_ids)
-    download_dir = 'downloaded_images_val'
-    labels_dir = 'labels_val'
+    download_dir = 'downloaded_images'
+    labels_dir = 'labels'
 
     os.makedirs(download_dir, exist_ok=True)
     os.makedirs(labels_dir, exist_ok=True)
