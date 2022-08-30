@@ -5,6 +5,11 @@
 > 1. Train an adversarial patch attack method against the EfficientDet object detector.
 > 2. Train an attention U-net model to detect patches and recover background info.
 
+## Approach
+
+[Please refer to the wiki](https://ssrc.atlassian.net/wiki/spaces/ML/pages/556859580/Physical+Adversarial+Attack+Detection+on+Object+Detection+Models)
+for the theory behind this implementation.
+
 ## Key results
 
 1. Adversrial patch reduces object class score by significant values.
