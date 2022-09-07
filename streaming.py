@@ -34,7 +34,7 @@ class Stream:
         :param set_width: whether to resize image to this width during streaming, height will be adjusted to maintain
         aspect ratio, set_width=0 will mean no rescaling.
         """
-        self.path = path if path is not None else 0
+        self.path = path = path if path is not None else 0
         self.set_width = set_width
 
         if not path or os.path.isfile(path):
