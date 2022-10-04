@@ -21,7 +21,7 @@ def main():
     """start attack training"""
     # setup resources. change the below folder name where the outputs will be saved. a folder with this name will be
     # created under the log_dir to store logs and another under save_dir to store weights during training
-    output_dirs_name = '1atk_new_tv'
+    output_dirs_name = 'test'
     log_dir = util.ensure_empty_dir(f'log_dir/{output_dirs_name}')
     gpu = tf.config.list_physical_devices('GPU')[0]
     tf.config.experimental.set_memory_growth(gpu, True)
@@ -54,7 +54,7 @@ def main():
     save_file = 'patch_{epoch:02d}_{val_asr_to_scale:.4f}'
 
     # train
-    model.fit(train_ds, validation_data=val_ds, epochs=500, steps_per_epoch=train_len,
+    model.fit(train_ds, validation_data=val_ds, epochs=200, steps_per_epoch=train_len,
               validation_steps=val_len,
               callbacks=[tb_callback,
                          tf.keras.callbacks.ModelCheckpoint(os.path.join(save_dir, save_file),
@@ -68,7 +68,7 @@ def main():
                                                             initial_value_threshold=None
                                                             ),
                          tf.keras.callbacks.ReduceLROnPlateau(monitor='loss', verbose=1, factor=.5, min_lr=1e-4,
-                                                              patience=50)
+                                                              patience=20)
                          ])
 
 

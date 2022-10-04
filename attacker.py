@@ -202,7 +202,7 @@ class PatchAttacker(tf.keras.Model):
 
         # attack success rate calculation
         boxes_pred, scores_pred = self._postprocessing(boxes_pred, scores_pred)
-        asr = self.calc_asr(scores, scores_pred, boxes, boxes_pred)
+        asr = self.calc_asr(scores, scores_pred)
         self.add_metric(asr, name='asr')
         self.add_metric(asr / self._scale_regressor.value(), name='asr_to_scale')
 
@@ -235,23 +235,21 @@ class PatchAttacker(tf.keras.Model):
         ax.set_xlabel('score_thresh')
         ax.set_ylabel('attack_success_rate')
 
-    def calc_asr(self, scores, scores_pred, boxes, boxes_pred, *, score_thresh=.5):
+    def calc_asr(self, scores, scores_pred, *, score_thresh=.5):
         """
         calculate attack success rate at a given score threshold
         :param scores: first pass scores
         :param scores_pred: second pass scores
-        :param boxes: first pass boxes
-        :param boxes_pred: second pass boxes
         :param score_thresh: threshold
         :return: attack success rate
         """
         filt = tf.greater_equal(scores, tf.constant(score_thresh))
-        labels_filt = tf.ragged.boolean_mask(boxes, filt)
+        scores_filt = tf.ragged.boolean_mask(scores, filt)
 
         filt = tf.greater_equal(scores_pred, tf.constant(score_thresh))
-        boxes_pred_filt = tf.ragged.boolean_mask(boxes_pred, filt)
-        return 1. - tf.cast(tf.size(boxes_pred_filt.flat_values),
-                            tf.float32) / (tf.cast(tf.size(labels_filt.flat_values), tf.float32) +
+        scores_pred_filt = tf.ragged.boolean_mask(scores_pred, filt)
+        return 1. - tf.cast(tf.size(scores_pred_filt.flat_values),
+                            tf.float32) / (tf.cast(tf.size(scores_filt.flat_values), tf.float32) +
                                            tf.keras.backend.epsilon())
 
     def vis_images(self, images, labels, scores, boxes_pred, scores_pred, training):
@@ -276,7 +274,7 @@ class PatchAttacker(tf.keras.Model):
 
         # calculate attack success rate and report to tensorboard
         for i, score in enumerate(self.bins):
-            self.asr[i].assign(self.calc_asr(scores, scores_pred, labels, boxes_pred, score_thresh=score))
+            self.asr[i].assign(self.calc_asr(scores, scores_pred, score_thresh=score))
         plot = self.plot_asr(self.bins, self.asr, self.cur_step)
 
         with self.tb._writers[tr].as_default():
