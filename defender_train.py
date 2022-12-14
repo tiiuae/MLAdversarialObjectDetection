@@ -21,7 +21,7 @@ def main():
     """start defence training"""
     # setup resources. change the below folder name where the outputs will be saved. a folder with this name will be
     # created under the log_dir to store logs and another under save_dir to store weights during training
-    output_dirs_name = 'defence_imp'
+    output_dirs_name = 'defence_coco'
     log_dir = util.ensure_empty_dir(f'log_dir/{output_dirs_name}')
     gpu = tf.config.list_physical_devices('GPU')[0]
     tf.config.experimental.set_memory_growth(gpu, True)
@@ -31,7 +31,7 @@ def main():
     config_override = {'nms_configs': {'iou_thresh': .5, 'score_thresh': .5}}
     model = defender.PatchAttackDefender(protected_model,
                                          # initial_weights='save_dir/patch_04_0.5024',
-                                         eval_patch='save_dir_new_data/patch_434_2.1692',
+                                         eval_patch='save_dir/save_dir_max_score/patch_200_0.7783',
                                          protege_config_override=config_override,
                                          visualize_freq=50)
     model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=1e-2), run_eagerly=False)
@@ -49,7 +49,7 @@ def main():
     val_len = datasets['val']['length']
 
     # init save dir
-    save_dir = util.ensure_empty_dir(f'save_dir/{output_dirs_name}')
+    save_dir = util.ensure_empty_dir(f'save_dir/det/{output_dirs_name}')
     save_file = 'patch_{epoch:02d}_{val_loss:.4f}'
 
     # train
